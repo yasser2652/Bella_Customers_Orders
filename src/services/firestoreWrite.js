@@ -1,6 +1,6 @@
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, increment, updateDoc } from "firebase/firestore";
 import { ensureAnonymousFirebaseUser, getFirestoreDb } from "../firebase.js";
-import { firstText } from "../utils/relationships.js";
+import { firstText, roundCurrencyAmount } from "../utils/relationships.js";
 
 const CUSTOMER_FIELD_ALIASES = {
   name: ["name", "customerName"],
@@ -67,5 +67,65 @@ export async function updateCustomerInfo(customer = {}, values = {}) {
   await updateDoc(
     doc(getFirestoreDb(), "customers", documentId),
     buildCustomerUpdatePatch(customer, values)
+  );
+}
+
+const PAYMENT_FIELD_BY_CURRENCY = {
+  LYD: "deliveryPaymentLyd",
+  USD: "deliveryPaymentUsd"
+};
+
+function normalizePaymentCurrency(currency) {
+  const cleanCurrency = String(currency || "").trim().toUpperCase();
+
+  if (!PAYMENT_FIELD_BY_CURRENCY[cleanCurrency]) {
+    throw new Error("Payment currency must be LYD or USD.");
+  }
+
+  return cleanCurrency;
+}
+
+function normalizePositivePaymentAmount(amount) {
+  const numericAmount = Number(amount);
+
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw new Error("Payment amount must be greater than 0.");
+  }
+
+  return roundCurrencyAmount(numericAmount);
+}
+
+function toLocalDateTimeValue(date = new Date()) {
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+
+  return localDate.toISOString().slice(0, 19);
+}
+
+export function getPackageTaskDocumentId(packageTask = {}) {
+  return firstText(packageTask.documentId, packageTask.firestoreId, packageTask.id);
+}
+
+export function buildPackageTaskPaymentPatch(packageTask = {}, values = {}, now = new Date()) {
+  const currency = normalizePaymentCurrency(values.currency);
+  const amountToAdd = normalizePositivePaymentAmount(values.amount);
+  const field = PAYMENT_FIELD_BY_CURRENCY[currency];
+  return {
+    [field]: increment(amountToAdd),
+    deliveryPaymentUpdatedAt: now.toISOString(),
+    deliveryPaymentUpdatedAtLocal: toLocalDateTimeValue(now)
+  };
+}
+
+export async function addPackageTaskPayment(packageTask = {}, values = {}) {
+  const documentId = getPackageTaskDocumentId(packageTask);
+
+  if (!documentId) {
+    throw new Error("Cannot update this package task because the Firestore document id is missing.");
+  }
+
+  await ensureAnonymousFirebaseUser();
+  await updateDoc(
+    doc(getFirestoreDb(), "packageTasks", documentId),
+    buildPackageTaskPaymentPatch(packageTask, values)
   );
 }

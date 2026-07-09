@@ -604,6 +604,32 @@ p {
   color: #6c4726;
 }
 
+
+.payment-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.payment-record-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8c19f;
+  border-radius: 8px;
+  background: #fffaf3;
+}
+
+.payment-record-form .helper-text {
+  padding: 10px 12px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fff;
+  color: #667085;
+  font-weight: 650;
+}
 .payment-source-line span {
   padding: 5px 8px;
   border-radius: 999px;
@@ -1149,7 +1175,8 @@ td a {
   .profile-actions .button,
   .profile-actions a,
   .toolbar .button,
-  .modal-actions .button {
+  .modal-actions .button,
+  .payment-card-actions .button {
     width: 100%;
   }
 

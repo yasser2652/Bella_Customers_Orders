@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { increment } from "firebase/firestore";
 import { formatCurrencyTotals } from "../src/utils/formatters.js";
 import {
   buildCustomerSummary,
@@ -7,6 +8,7 @@ import {
   getOrderSummary
 } from "../src/utils/relationships.js";
 import {
+  buildPackageTaskPaymentPatch,
   buildCustomerUpdatePatch,
   getCustomerEditableValues
 } from "../src/services/firestoreWrite.js";
@@ -132,6 +134,14 @@ assert.equal(
   "LYD 60.00 + USD 20.00 + CAD 10.00"
 );
 assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 1);
+const paymentPatch = buildPackageTaskPaymentPatch(
+  packageTasks[0],
+  { currency: "LYD", amount: "15.25" },
+  new Date("2026-01-14T12:00:00.000Z")
+);
+assert.equal(paymentPatch.deliveryPaymentLyd.isEqual(increment(15.25)), true);
+assert.equal(paymentPatch.deliveryPaymentUpdatedAt, "2026-01-14T12:00:00.000Z");
+assert.match(paymentPatch.deliveryPaymentUpdatedAtLocal, /^2026-01-14T/);
 
 const firstOrderPurchases = getOrderPurchases(orders[0], purchases);
 assert.equal(firstOrderPurchases.length, 2);

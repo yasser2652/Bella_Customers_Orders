@@ -30,6 +30,7 @@ import {
   subscribeToFirestoreCollection
 } from "./services/firestoreRead.js";
 import {
+  addPackageTaskPayment,
   getCustomerEditableValues,
   updateCustomerInfo
 } from "./services/firestoreWrite.js";
@@ -432,6 +433,52 @@ function SearchWorkspace({
   );
 }
 
+const PAYMENT_ENTRY_CURRENCIES = ["LYD", "USD"];
+
+function getDefaultPaymentCurrency(paymentSummary = {}) {
+  const remainingCurrencies = (paymentSummary.remainingTotals || []).map(
+    (total) => total.currency
+  );
+
+  if (remainingCurrencies.includes("LYD")) {
+    return "LYD";
+  }
+
+  if (remainingCurrencies.includes("USD")) {
+    return "USD";
+  }
+
+  return "LYD";
+}
+
+function getPackageTaskPaymentAmount(packageTask = {}, currency = "LYD") {
+  const field = currency === "USD" ? "deliveryPaymentUsd" : "deliveryPaymentLyd";
+  const amount = Number(packageTask[field]);
+
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getPackageTaskOptionLabel(packageTask = {}, index = 0) {
+  return firstText(
+    packageTask.orderReference,
+    packageTask.orderNumber,
+    packageTask.orderRef,
+    packageTask.reference,
+    packageTask.orderId,
+    packageTask.id,
+    `Package task ${index + 1}`
+  );
+}
+
+function getDefaultPaymentForm(summary = {}, paymentSummary = {}) {
+  const firstTask = summary.packageTasks?.[0] || null;
+
+  return {
+    packageTaskKey: firstTask ? getRecordKey(firstTask, "package-task-0") : "",
+    currency: getDefaultPaymentCurrency(paymentSummary),
+    amount: ""
+  };
+}
 function PaymentTotals({ label, totals, emptyLabel = "Not recorded" }) {
   return (
     <div>
@@ -441,7 +488,7 @@ function PaymentTotals({ label, totals, emptyLabel = "Not recorded" }) {
   );
 }
 
-function CustomerPaymentStatusCard({ paymentSummary }) {
+function CustomerPaymentStatusCard({ paymentSummary, canRecordPayment, onRecordPayment }) {
   return (
     <section className={`customer-payment-card payment-${paymentSummary.status}`}>
       <div className="section-title-row compact">
@@ -449,9 +496,20 @@ function CustomerPaymentStatusCard({ paymentSummary }) {
           <p className="eyebrow">Delivery payments</p>
           <h3>Payment status</h3>
         </div>
-        <span className={`badge payment-badge payment-${paymentSummary.status}`}>
-          {paymentSummary.statusLabel}
-        </span>
+        <div className="payment-card-actions">
+          <span className={`badge payment-badge payment-${paymentSummary.status}`}>
+            {paymentSummary.statusLabel}
+          </span>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={!canRecordPayment}
+            onClick={onRecordPayment}
+          >
+            <Save size={16} aria-hidden="true" />
+            Record payment
+          </button>
+        </div>
       </div>
       <div className="payment-metrics">
         <PaymentTotals label="Order total" totals={paymentSummary.owedTotals} emptyLabel="No balance" />
@@ -474,6 +532,107 @@ function CustomerPaymentStatusCard({ paymentSummary }) {
   );
 }
 
+function PaymentRecordForm({ packageTasks, values, setValues, saving, onSave, onCancel }) {
+  const selectedTask =
+    packageTasks.find(
+      (task, index) => getRecordKey(task, `package-task-${index}`) === values.packageTaskKey
+    ) || packageTasks[0];
+  const existingAmount = selectedTask
+    ? getPackageTaskPaymentAmount(selectedTask, values.currency)
+    : 0;
+  const amountToAdd = Number(values.amount);
+  const projectedAmount =
+    Number.isFinite(amountToAdd) && amountToAdd > 0
+      ? existingAmount + amountToAdd
+      : existingAmount;
+  const canSave = Boolean(selectedTask) && Number.isFinite(amountToAdd) && amountToAdd > 0;
+
+  return (
+    <form className="payment-record-form" onSubmit={onSave}>
+      <div className="section-title-row compact">
+        <div>
+          <p className="eyebrow">Add payment</p>
+          <h3>Record customer payment</h3>
+        </div>
+      </div>
+      <div className="edit-grid">
+        <label className="field">
+          <span>Package task</span>
+          <select
+            className="input"
+            value={values.packageTaskKey}
+            onChange={(event) =>
+              setValues((currentValues) => ({
+                ...currentValues,
+                packageTaskKey: event.target.value
+              }))
+            }
+          >
+            {packageTasks.map((task, index) => {
+              const key = getRecordKey(task, `package-task-${index}`);
+
+              return (
+                <option value={key} key={key}>
+                  {getPackageTaskOptionLabel(task, index)}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <label className="field">
+          <span>Currency</span>
+          <select
+            className="input"
+            value={values.currency}
+            onChange={(event) =>
+              setValues((currentValues) => ({
+                ...currentValues,
+                currency: event.target.value
+              }))
+            }
+          >
+            {PAYMENT_ENTRY_CURRENCIES.map((currency) => (
+              <option value={currency} key={currency}>
+                {currency}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field wide">
+          <span>Amount paid now</span>
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={values.amount}
+            onChange={(event) =>
+              setValues((currentValues) => ({
+                ...currentValues,
+                amount: event.target.value
+              }))
+            }
+            placeholder="0.00"
+          />
+        </label>
+      </div>
+      <p className="helper-text">
+        Existing {values.currency} payment is {formatCurrency(existingAmount, values.currency)}.
+        Saving will update it to {formatCurrency(projectedAmount, values.currency)}.
+      </p>
+      <div className="form-actions">
+        <button className="button secondary" type="button" disabled={saving} onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="button" type="submit" disabled={saving || !canSave}>
+          <Save size={16} aria-hidden="true" />
+          {saving ? "Saving..." : "Add payment"}
+        </button>
+      </div>
+    </form>
+  );
+}
 function PaymentFollowUpsPanel({ paymentSummaries, selectedCustomerKey, onSelect }) {
   const visibleFollowUps = paymentSummaries
     .filter((paymentSummary) => paymentSummary.hasOutstandingBalance)
@@ -1394,6 +1553,20 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
     () => buildCustomerPaymentSummary(summary, data.packageScanLogs),
     [data.packageScanLogs, summary]
   );
+  const defaultPaymentForm = useMemo(
+    () => getDefaultPaymentForm(summary, paymentSummary),
+    [paymentSummary, summary]
+  );
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [paymentForm, setPaymentForm] = useState(() => defaultPaymentForm);
+  const canRecordPayment = paymentSummary.hasOutstandingBalance && summary.packageTasks.length > 0;
+
+  useEffect(() => {
+    setRecordingPayment(false);
+    setSavingPayment(false);
+    setPaymentForm(defaultPaymentForm);
+  }, [defaultPaymentForm]);
 
   const toggleOrder = (order) => {
     const orderKey = getRecordKey(order, getOrderReference(order));
@@ -1438,6 +1611,38 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
   const handleCancelEditCustomer = () => {
     setEditValues(initialEditValues);
     setEditing(false);
+  };
+  const handleSavePayment = async (event) => {
+    event.preventDefault();
+
+    const selectedTask = summary.packageTasks.find(
+      (task, index) => getRecordKey(task, `package-task-${index}`) === paymentForm.packageTaskKey
+    );
+
+    if (!selectedTask) {
+      setNotice({ tone: "warning", message: "Select a package task before saving payment." });
+      return;
+    }
+
+    setSavingPayment(true);
+
+    try {
+      await addPackageTaskPayment(selectedTask, paymentForm);
+      setRecordingPayment(false);
+      setPaymentForm(defaultPaymentForm);
+      setNotice({ message: "Payment added to package task." });
+    } catch (error) {
+      setNotice({
+        tone: "warning",
+        message: getErrorMessage(error) || "Payment update failed."
+      });
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+  const handleCancelPayment = () => {
+    setPaymentForm(defaultPaymentForm);
+    setRecordingPayment(false);
   };
 
   return (
@@ -1542,7 +1747,25 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
         </div>
       </div>
 
-      <CustomerPaymentStatusCard paymentSummary={paymentSummary} />
+      <CustomerPaymentStatusCard
+        paymentSummary={paymentSummary}
+        canRecordPayment={canRecordPayment}
+        onRecordPayment={() => {
+          setPaymentForm(defaultPaymentForm);
+          setRecordingPayment(true);
+        }}
+      />
+
+      {recordingPayment ? (
+        <PaymentRecordForm
+          packageTasks={summary.packageTasks}
+          values={paymentForm}
+          setValues={setPaymentForm}
+          saving={savingPayment}
+          onSave={handleSavePayment}
+          onCancel={handleCancelPayment}
+        />
+      ) : null}
 
       <ReceiptPanel summary={summary} data={data} setNotice={setNotice} />
 
