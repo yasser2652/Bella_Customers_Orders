@@ -511,6 +511,138 @@ p {
   font-size: 1.15rem;
 }
 
+
+.payment-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 14px 34px rgba(83, 58, 31, 0.08);
+}
+
+.payment-panel-summary,
+.payment-source-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.payment-follow-up-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 10px;
+}
+
+.payment-follow-up-row,
+.customer-payment-card {
+  display: grid;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+}
+
+.payment-follow-up-row.selected {
+  border-color: #8b5e34;
+  box-shadow: inset 3px 0 0 #8b5e34;
+}
+
+.payment-row-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.payment-row-main strong,
+.payment-row-main p,
+.payment-row-grid strong,
+.payment-metrics strong {
+  overflow-wrap: anywhere;
+}
+
+.payment-row-main p {
+  margin-top: 3px;
+  color: #667085;
+}
+
+.payment-row-grid,
+.payment-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.payment-row-grid > div,
+.payment-metrics > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  background: #fcfaf7;
+}
+
+.payment-row-grid span,
+.payment-metrics span {
+  display: block;
+  margin-bottom: 4px;
+  color: #667085;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.payment-row-grid strong,
+.payment-metrics strong {
+  color: #6c4726;
+}
+
+.payment-source-line span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f7efe3;
+  color: #6c4726;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.payment-badge.payment-unpaid {
+  border-color: #e9b4a7;
+  background: #fff5f2;
+  color: #8a2618;
+}
+
+.payment-badge.payment-partial {
+  border-color: #d8c19f;
+  background: #fffaf3;
+  color: #6c4726;
+}
+
+.payment-badge.payment-paid,
+.payment-badge.payment-overpaid {
+  border-color: #a6d2b1;
+  background: #f2fbf4;
+  color: #116239;
+}
+
+.customer-payment-card.payment-unpaid {
+  border-color: #e9b4a7;
+}
+
+.customer-payment-card.payment-partial {
+  border-color: #d8c19f;
+}
+
+.payment-empty {
+  min-height: 120px;
+}
 .receipt-panel,
 .related-panel,
 .orders-section {
@@ -994,6 +1126,12 @@ td a {
   .profile-stats,
   .receipt-controls,
   .related-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-follow-up-list,
+  .payment-row-grid,
+  .payment-metrics {
     grid-template-columns: 1fr;
   }
 

@@ -10,6 +10,7 @@ import {
   buildCustomerUpdatePatch,
   getCustomerEditableValues
 } from "../src/services/firestoreWrite.js";
+import { buildCustomerPaymentSummary, getPaymentFollowUps } from "../src/utils/payments.js";
 import {
   buildReceiptDisplayModel,
   buildReceiptModel,
@@ -77,6 +78,26 @@ const shipments = [
     status: "Delivered"
   }
 ];
+const packageTasks = [
+  {
+    id: "task-1",
+    customerId: "cust-1",
+    orderId: "order-1",
+    orderReference: "BB-1001",
+    deliveryPaymentLyd: 40,
+    deliveryPaymentUpdatedAtLocal: "2026-01-13T10:00:00"
+  }
+];
+const packageScanLogs = [
+  {
+    id: "scan-log-1",
+    customerId: "cust-1",
+    orderId: "order-1",
+    packageTaskId: "task-1",
+    deliveryPaymentUsd: 5,
+    deliveryPaymentUpdatedAtLocal: "2026-01-13T10:05:00"
+  }
+];
 const data = {
   customers: [customer],
   orders,
@@ -91,7 +112,8 @@ const data = {
   ],
   shipments,
   deliveries: [],
-  packageTasks: []
+  packageTasks,
+  packageScanLogs
 };
 
 const summary = buildCustomerSummary(customer, data);
@@ -102,6 +124,14 @@ assert.equal(customerMatchesSearch(summary, "amina"), true);
 assert.equal(summary.orders.length, 2);
 assert.equal(summary.purchases.length, 3);
 assert.equal(summary.pendingRequestedItems.length, 1);
+const paymentSummary = buildCustomerPaymentSummary(summary, data.packageScanLogs);
+assert.equal(paymentSummary.status, "partial");
+assert.equal(formatCurrencyTotals(paymentSummary.paidTotals), "LYD 40.00 + USD 5.00");
+assert.equal(
+  formatCurrencyTotals(paymentSummary.remainingTotals),
+  "LYD 60.00 + USD 20.00 + CAD 10.00"
+);
+assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 1);
 
 const firstOrderPurchases = getOrderPurchases(orders[0], purchases);
 assert.equal(firstOrderPurchases.length, 2);
@@ -124,7 +154,8 @@ const receiptModel = buildReceiptModel({
   purchases,
   shipments,
   deliveries: [],
-  packageTasks: [],
+  packageTasks,
+  packageScanLogs,
   scopeLabel: "Smoke test"
 });
 const receiptText = buildReceiptText(receiptModel);
@@ -171,7 +202,8 @@ const missingFieldSummary = buildCustomerSummary(
     requestedItems: [],
     shipments: [],
     deliveries: [],
-    packageTasks: []
+    packageTasks: [],
+    packageScanLogs: []
   }
 );
 

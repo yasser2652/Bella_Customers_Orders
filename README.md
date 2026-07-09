@@ -1,8 +1,8 @@
 # Bella Customers Orders
 
-Read-only React app for browsing Bella Boutique customers, their orders, purchases, requested items, shipments, deliveries, package tasks, and receipts.
+React app for browsing Bella Boutique customers, their orders, purchases, requested items, shipments, deliveries, package tasks, delivery payment status, and receipts.
 
-The app uses the same Firebase Web config and shared Firestore collections as the Bella Boutique Management app. It subscribes with anonymous auth and does not call Firestore write APIs.
+The app uses the same Firebase Web config and shared Firestore collections as the Bella Boutique Management app. It subscribes with anonymous auth. Delivery payment fields are read-only; the app only writes customer profile edits when staff explicitly save changes.
 
 ## Setup
 
@@ -23,4 +23,5 @@ npm run dev
 - `shipments`
 - `deliveries`
 - `packageTasks`
+- `packageScanLogs`
 

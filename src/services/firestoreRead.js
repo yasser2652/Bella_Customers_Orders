@@ -9,7 +9,8 @@ export const FIRESTORE_READ_COLLECTIONS = [
   "requestedItems",
   "shipments",
   "deliveries",
-  "packageTasks"
+  "packageTasks",
+  "packageScanLogs"
 ];
 
 const METADATA_SORT_FIELDS = [

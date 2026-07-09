@@ -36,6 +36,7 @@ import {
 import { getRecordKey, identityValues } from "./utils/identity.js";
 import {
   buildCustomerSummary,
+  combineCurrencyTotals,
   customerMatchesSearch,
   dateIsInRange,
   firstText,
@@ -59,6 +60,7 @@ import {
   purchaseHasOrderAlias
 } from "./utils/relationships.js";
 import { formatCurrency, formatCurrencyTotals, formatDisplayDate } from "./utils/formatters.js";
+import { buildCustomerPaymentSummary } from "./utils/payments.js";
 import {
   buildPrintableReceiptHtml,
   buildReceiptDisplayModel,
@@ -430,6 +432,127 @@ function SearchWorkspace({
   );
 }
 
+function PaymentTotals({ label, totals, emptyLabel = "Not recorded" }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{totals.length ? formatCurrencyTotals(totals) : emptyLabel}</strong>
+    </div>
+  );
+}
+
+function CustomerPaymentStatusCard({ paymentSummary }) {
+  return (
+    <section className={`customer-payment-card payment-${paymentSummary.status}`}>
+      <div className="section-title-row compact">
+        <div>
+          <p className="eyebrow">Delivery payments</p>
+          <h3>Payment status</h3>
+        </div>
+        <span className={`badge payment-badge payment-${paymentSummary.status}`}>
+          {paymentSummary.statusLabel}
+        </span>
+      </div>
+      <div className="payment-metrics">
+        <PaymentTotals label="Order total" totals={paymentSummary.owedTotals} emptyLabel="No balance" />
+        <PaymentTotals label="Recorded paid" totals={paymentSummary.paidTotals} />
+        <PaymentTotals label="Remaining" totals={paymentSummary.remainingTotals} emptyLabel="No remaining balance" />
+        <div>
+          <span>Last payment update</span>
+          <strong>
+            {paymentSummary.lastPaymentAt
+              ? formatDisplayDate(paymentSummary.lastPaymentAt, "Not recorded", { includeTime: true })
+              : "Not recorded"}
+          </strong>
+        </div>
+      </div>
+      <div className="payment-source-line">
+        <span>{paymentSummary.packageTaskPaymentCount} package task payments</span>
+        <span>{paymentSummary.scanLogPaymentCount} scan log payments</span>
+      </div>
+    </section>
+  );
+}
+
+function PaymentFollowUpsPanel({ paymentSummaries, selectedCustomerKey, onSelect }) {
+  const visibleFollowUps = paymentSummaries
+    .filter((paymentSummary) => paymentSummary.hasOutstandingBalance)
+    .sort((leftSummary, rightSummary) => {
+      const statusOrder = { unpaid: 0, partial: 1, overpaid: 2, paid: 3, "no-balance": 4 };
+      const leftStatus = statusOrder[leftSummary.status] ?? 9;
+      const rightStatus = statusOrder[rightSummary.status] ?? 9;
+
+      if (leftStatus !== rightStatus) {
+        return leftStatus - rightStatus;
+      }
+
+      return leftSummary.customerName.localeCompare(rightSummary.customerName, undefined, {
+        sensitivity: "base"
+      });
+    });
+  const remainingTotals = combineCurrencyTotals(
+    visibleFollowUps.map((paymentSummary) => paymentSummary.remainingTotals)
+  );
+
+  return (
+    <section className="payment-panel" aria-label="Payment follow-ups">
+      <div className="section-title-row compact">
+        <div>
+          <p className="eyebrow">Payment follow-ups</p>
+          <h2>Customers with remaining balance</h2>
+        </div>
+        <div className="payment-panel-summary">
+          <span className="count-badge">{visibleFollowUps.length} customers</span>
+          <span className="count-badge">{formatCurrencyTotals(remainingTotals)}</span>
+        </div>
+      </div>
+
+      {visibleFollowUps.length === 0 ? (
+        <div className="empty-state inline payment-empty">
+          <ReceiptText size={22} aria-hidden="true" />
+          <h3>No unpaid customers found</h3>
+          <p>All linked delivery payments cover the current customer order totals.</p>
+        </div>
+      ) : (
+        <div className="payment-follow-up-list">
+          {visibleFollowUps.map((paymentSummary) => (
+            <button
+              className={`payment-follow-up-row payment-${paymentSummary.status}${
+                selectedCustomerKey === paymentSummary.customerKey ? " selected" : ""
+              }`}
+              type="button"
+              key={paymentSummary.customerKey}
+              onClick={() => onSelect(paymentSummary.summary)}
+            >
+              <div className="payment-row-main">
+                <div>
+                  <strong>{paymentSummary.customerName}</strong>
+                  <p>{paymentSummary.customerPhone || "No phone on record"}</p>
+                </div>
+                <span className={`badge payment-badge payment-${paymentSummary.status}`}>
+                  {paymentSummary.statusLabel}
+                </span>
+              </div>
+              <div className="payment-row-grid">
+                <PaymentTotals label="Owed" totals={paymentSummary.owedTotals} emptyLabel="No balance" />
+                <PaymentTotals label="Paid" totals={paymentSummary.paidTotals} />
+                <PaymentTotals label="Remaining" totals={paymentSummary.remainingTotals} emptyLabel="No remaining balance" />
+                <div>
+                  <span>Last update</span>
+                  <strong>
+                    {paymentSummary.lastPaymentAt
+                      ? formatDisplayDate(paymentSummary.lastPaymentAt, "Not recorded", { includeTime: true })
+                      : "Not recorded"}
+                  </strong>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 function CopyPhoneButton({ phone, setNotice }) {
   const disabled = !phone;
 
@@ -1267,6 +1390,10 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
   );
   const pendingRequestedItems = summary.requestedItems.filter(isPendingRequestedItem);
   const whatsappProfileUrl = buildWhatsAppUrl(summary.phone, "");
+  const paymentSummary = useMemo(
+    () => buildCustomerPaymentSummary(summary, data.packageScanLogs),
+    [data.packageScanLogs, summary]
+  );
 
   const toggleOrder = (order) => {
     const orderKey = getRecordKey(order, getOrderReference(order));
@@ -1414,6 +1541,8 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
           <strong>{formatCurrencyTotals(summary.currencyTotals)}</strong>
         </div>
       </div>
+
+      <CustomerPaymentStatusCard paymentSummary={paymentSummary} />
 
       <ReceiptPanel summary={summary} data={data} setNotice={setNotice} />
 
@@ -1574,6 +1703,11 @@ function App() {
     );
   }, [selectedCustomerKey, summaries]);
 
+  const paymentSummaries = useMemo(
+    () => summaries.map((summary) => buildCustomerPaymentSummary(summary, data.packageScanLogs)),
+    [data.packageScanLogs, summaries]
+  );
+
   const visibleSummaries = useMemo(() => {
     if (!showAll && !debouncedQuery.trim()) {
       return [];
@@ -1664,6 +1798,15 @@ function App() {
           </span>
         ))}
       </section>
+
+      <PaymentFollowUpsPanel
+        paymentSummaries={paymentSummaries}
+        selectedCustomerKey={selectedCustomerKey}
+        onSelect={(summary) => {
+          setSelectedCustomerKey(summary.key);
+          scrollToProfileOnPhone();
+        }}
+      />
 
       <main className="workspace">
         <SearchWorkspace
