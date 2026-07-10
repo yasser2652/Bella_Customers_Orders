@@ -944,11 +944,32 @@ p {
 }
 
 .status-delivered,
-.status-handed-over,
-.status-handed-over-delivered-to-customer {
+.status-delivered-to-customer {
   border-color: var(--success-border);
   background: var(--success-bg);
   color: var(--success-text);
+}
+
+.status-delivery-sync-issue,
+.status-returned,
+.status-delivery-cancelled {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.status-out-for-delivery,
+.status-ready-for-delivery,
+.status-not-ready-for-delivery {
+  border-color: var(--info-border);
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.sync-warning-meta {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
 .order-meta-grid {

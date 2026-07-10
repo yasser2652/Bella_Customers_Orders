@@ -10,6 +10,7 @@ import {
   combineCurrencyTotals,
   firstText,
   getOrderReference,
+  getPackageTaskGroupKey,
   isCustomerFacingOrderDeliveredStatus,
   roundCurrencyAmount
 } from "./relationships.js";
@@ -214,24 +215,73 @@ function getTaskOrderReference(task = {}) {
 }
 
 function getTaskPaymentGroupKey(task = {}, index = 0) {
-  const orderKey = firstText(
-    ...identityValuesFromFields(task, ORDER_RELATION_FIELDS),
-    task.orderId,
-    getTaskOrderReference(task)
+  return `package:${getPackageTaskGroupKey(task, index)}`;
+}
+
+function getTaskPaymentOwnerId(task = {}) {
+  return firstText(task.deliveryPaymentOwnerTaskId, task.paymentOwnerTaskId);
+}
+
+function taskMatchesPaymentOwner(task = {}, ownerId = "") {
+  return valuesOverlap(
+    uniqueIdentityValues([
+      ...identityValues(task),
+      task.documentId,
+      task.firestoreId,
+      task.id,
+      task.localId,
+      task.androidLocalId
+    ]),
+    [ownerId]
   );
+}
 
-  if (orderKey) {
-    return `order:${normalizeComparableText(orderKey)}`;
-  }
+function selectPackageTaskPaymentSources(sources = []) {
+  const sourcesByGroup = new Map();
 
-  const customerKey = firstText(...identityValuesFromFields(task, CUSTOMER_RELATION_FIELDS), task.customerId);
-  const deliveryKey = firstText(task.packageId, task.packageLocalId, task.deliveryId, task.shipmentId, task.trackingNumber, task.tracking);
+  sources.forEach((source) => {
+    const current = sourcesByGroup.get(source.groupKey) || [];
 
-  if (customerKey && deliveryKey) {
-    return `delivery:${normalizeComparableText(`${customerKey}:${deliveryKey}`)}`;
-  }
+    current.push(source);
+    sourcesByGroup.set(source.groupKey, current);
+  });
 
-  return `task:${getTaskKey(task, index)}`;
+  return [...sourcesByGroup.values()]
+    .map((groupSources) => {
+      const ownerId = firstText(...groupSources.map((source) => getTaskPaymentOwnerId(source.record)));
+      const ownerSource = ownerId
+        ? groupSources.find((source) =>
+            taskMatchesPaymentOwner(source.record, ownerId) &&
+            hasCurrencyTotals(source.currencyTotals)
+          )
+        : null;
+
+      if (ownerSource) {
+        return ownerSource;
+      }
+
+      const currencyTotals = PAYMENT_FIELDS.map(([, currency]) => {
+        const source = groupSources.find((candidateSource) =>
+          candidateSource.currencyTotals.some(
+            (total) => total.currency === currency && total.amount > 0
+          )
+        );
+        const total = source?.currencyTotals.find((candidateTotal) => candidateTotal.currency === currency);
+
+        return total ? { currency, amount: total.amount } : null;
+      }).filter(Boolean);
+
+      if (!hasCurrencyTotals(currencyTotals)) {
+        return null;
+      }
+
+      return {
+        ...groupSources[0],
+        record: groupSources.find((source) => hasCurrencyTotals(source.currencyTotals))?.record || groupSources[0].record,
+        currencyTotals
+      };
+    })
+    .filter(Boolean);
 }
 
 function getLogOrderReference(log = {}) {
@@ -321,9 +371,7 @@ function buildPaymentSources(summary = {}, packageScanLogs = [], scope = {}) {
       currencyTotals: getPaymentTotals(task)
     }))
     .filter((source) => hasCurrencyTotals(source.currencyTotals));
-  // Delivery payment fields can be mirrored onto every package task for the same order.
-  // Count the latest order-level record once instead of summing duplicated task documents.
-  const taskSources = selectLatestSourcesByGroup(rawTaskSources);
+  const taskSources = selectPackageTaskPaymentSources(rawTaskSources);
   const taskSourcesByGroup = new Map(
     taskSources.map((source) => [source.groupKey, source])
   );
@@ -395,7 +443,7 @@ function getDeliveredPaymentScope(summary = {}) {
       order: orders[index],
       orderSummary
     }))
-    .filter(({ orderSummary }) => isCustomerFacingOrderDeliveredStatus(orderSummary?.status));
+    .filter(({ orderSummary }) => isCustomerFacingOrderDeliveredStatus(orderSummary));
 
   return {
     orders: deliveredEntries.map(({ order }) => order).filter(Boolean),

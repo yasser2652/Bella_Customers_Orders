@@ -144,7 +144,8 @@ const handedOverPaymentSummary = buildCustomerSummary(customer, {
     {
       id: "task-2",
       orderId: "order-2",
-      status: "handedOver"
+      status: "packed",
+      deliveryStatus: "delivered"
     }
   ]
 });
@@ -174,8 +175,31 @@ const mirroredPackageTaskSummary = buildCustomerSummary(customer, {
   packageScanLogs: []
 });
 const mirroredPackageTaskPaymentSummary = buildCustomerPaymentSummary(mirroredPackageTaskSummary, []);
-assert.equal(formatCurrencyTotals(mirroredPackageTaskPaymentSummary.paidTotals), "LYD 95.00 + USD 25.00");
+assert.equal(formatCurrencyTotals(mirroredPackageTaskPaymentSummary.paidTotals), "LYD 100.00 + USD 25.00");
 assert.equal(mirroredPackageTaskPaymentSummary.packageTaskPaymentCount, 1);
+const ownerPackageTaskSummary = buildCustomerSummary(customer, {
+  ...data,
+  packageTasks: [
+    {
+      ...packageTasks[0],
+      id: "owner-task",
+      deliveryPaymentOwnerTaskId: "owner-task",
+      deliveryPaymentLyd: 88,
+      deliveryPaymentUsd: 12
+    },
+    {
+      ...packageTasks[0],
+      id: "item-task",
+      deliveryPaymentOwnerTaskId: "owner-task",
+      deliveryPaymentLyd: 0,
+      deliveryPaymentUsd: 0
+    }
+  ],
+  packageScanLogs: []
+});
+const ownerPackageTaskPaymentSummary = buildCustomerPaymentSummary(ownerPackageTaskSummary, []);
+assert.equal(formatCurrencyTotals(ownerPackageTaskPaymentSummary.paidTotals), "LYD 88.00 + USD 12.00");
+assert.equal(ownerPackageTaskPaymentSummary.packageTaskPaymentCount, 1);
 const awaitingDeliverySummary = buildCustomerSummary(customer, {
   ...data,
   shipments: [],
@@ -226,7 +250,8 @@ const pendingPackageSummary = getOrderSummary(
   [],
   [{ id: "task-pending", orderId: "order-1", status: "pending" }]
 );
-assert.equal(pendingPackageSummary.status, "Package pending");
+assert.equal(pendingPackageSummary.status, "Not ready for delivery");
+assert.equal(pendingPackageSummary.packingStatusLabel, "Package pending");
 const partialPackageSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -234,7 +259,8 @@ const partialPackageSummary = getOrderSummary(
   [],
   [{ id: "task-partial", orderId: "order-1", status: "partiallyPacked" }]
 );
-assert.equal(partialPackageSummary.status, "Partially packed");
+assert.equal(partialPackageSummary.status, "Not ready for delivery");
+assert.equal(partialPackageSummary.packingStatusLabel, "Partially packed");
 const packedPackageSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -242,23 +268,34 @@ const packedPackageSummary = getOrderSummary(
   [],
   [{ id: "task-packed", orderId: "order-1", status: "ready" }]
 );
-assert.equal(packedPackageSummary.status, "Packed");
-const handedOverPackageSummary = getOrderSummary(
+assert.equal(packedPackageSummary.status, "Ready for delivery");
+assert.equal(packedPackageSummary.packingStatusLabel, "Packed");
+const handedOverPackingOnlySummary = getOrderSummary(
   orders[0],
   purchases,
   [],
   [],
   [{ id: "task-handed", orderId: "order-1", status: "handedOver" }]
 );
-assert.equal(handedOverPackageSummary.status, "Handed over / delivered to customer");
-const legacyDeliveredPackageSummary = getOrderSummary(
+assert.equal(handedOverPackingOnlySummary.status, "Ready for delivery");
+assert.equal(handedOverPackingOnlySummary.packingStatusLabel, "Packing handed over");
+const deliveredPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-delivered", orderId: "order-1", status: "packed", deliveryStatus: "delivered" }]
+);
+assert.equal(deliveredPackageSummary.status, "Delivered to customer");
+const legacyPackingCompletedSummary = getOrderSummary(
   orders[0],
   purchases,
   [],
   [],
   [{ id: "task-legacy", orderId: "order-1", status: "completed" }]
 );
-assert.equal(legacyDeliveredPackageSummary.status, "Handed over / delivered to customer");
+assert.equal(legacyPackingCompletedSummary.status, "Ready for delivery");
+assert.equal(legacyPackingCompletedSummary.packingStatusLabel, "Packing handed over");
 const mixedStartedPackageSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -269,7 +306,8 @@ const mixedStartedPackageSummary = getOrderSummary(
     { id: "task-mixed-packed", orderId: "order-1", status: "packed" }
   ]
 );
-assert.equal(mixedStartedPackageSummary.status, "Partially packed");
+assert.equal(mixedStartedPackageSummary.status, "Not ready for delivery");
+assert.equal(mixedStartedPackageSummary.packingStatusLabel, "Partially packed");
 const allPackedOrHandedSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -280,31 +318,32 @@ const allPackedOrHandedSummary = getOrderSummary(
     { id: "task-all-handed", orderId: "order-1", status: "handedOver" }
   ]
 );
-assert.equal(allPackedOrHandedSummary.status, "Packed");
+assert.equal(allPackedOrHandedSummary.status, "Ready for delivery");
+assert.equal(allPackedOrHandedSummary.packingStatusLabel, "Packed");
 const orderIdsPackageSummary = getOrderSummary(
   orders[0],
   purchases,
   [],
   [],
-  [{ id: "task-order-ids", orderIds: ["order-1"], status: "handedOver" }]
+  [{ id: "task-order-ids", orderIds: ["order-1"], status: "packed", deliveryStatus: "delivered" }]
 );
-assert.equal(orderIdsPackageSummary.status, "Handed over / delivered to customer");
+assert.equal(orderIdsPackageSummary.status, "Delivered to customer");
 const linkedOrderIdsPackageSummary = getOrderSummary(
   orders[0],
   purchases,
   [],
   [],
-  [{ id: "task-linked-order-ids", linkedOrderIds: ["order-1"], status: "handedOver" }]
+  [{ id: "task-linked-order-ids", linkedOrderIds: ["order-1"], status: "packed", deliveryStatus: "delivered" }]
 );
-assert.equal(linkedOrderIdsPackageSummary.status, "Handed over / delivered to customer");
+assert.equal(linkedOrderIdsPackageSummary.status, "Delivered to customer");
 const documentReferencePackageSummary = getOrderSummary(
   orders[0],
   purchases,
   [],
   [],
-  [{ id: "task-document-reference", orderRef: { path: "orders/order-1" }, status: "handedOver" }]
+  [{ id: "task-document-reference", orderRef: { path: "orders/order-1" }, status: "packed", deliveryStatus: "delivered" }]
 );
-assert.equal(documentReferencePackageSummary.status, "Handed over / delivered to customer");
+assert.equal(documentReferencePackageSummary.status, "Delivered to customer");
 const shippedOpenOrderSummary = getOrderSummary(
   { ...orders[0], status: "OPEN", shipmentId: "shipment-1", shippedAt: "2026-01-15T09:00:00.000Z" },
   purchases,
@@ -320,7 +359,19 @@ const orderReferencesPackageSummary = getOrderSummary(
   [],
   [{ id: "task-order-references", orderReferences: ["BB-1001"], status: "packed" }]
 );
-assert.equal(orderReferencesPackageSummary.status, "Packed");
+assert.equal(orderReferencesPackageSummary.status, "Ready for delivery");
+assert.equal(orderReferencesPackageSummary.packingStatusLabel, "Packed");
+const scanLogInconsistentSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-scan-inconsistent", orderId: "order-1", status: "packed" }],
+  [{ id: "scan-delivered", orderId: "order-1", status: "delivered", scannedAt: "2026-01-15T10:00:00.000Z" }]
+);
+assert.equal(scanLogInconsistentSummary.status, "Delivery sync issue");
+assert.equal(scanLogInconsistentSummary.packingStatusLabel, "Packed");
+assert.equal(scanLogInconsistentSummary.deliverySyncIssues.length, 1);
 
 const totalsText = formatCurrencyTotals(summary.currencyTotals);
 assert.equal(totalsText, "LYD 100.00 + USD 25.00 + CAD 10.00");

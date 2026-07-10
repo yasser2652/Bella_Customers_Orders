@@ -990,7 +990,8 @@ function OrderCard({
     data.purchases,
     data.shipments,
     data.deliveries,
-    data.packageTasks
+    data.packageTasks,
+    data.packageScanLogs
   );
   const date = getOrderDate(order);
   const trackingNumber = firstText(
@@ -1036,6 +1037,14 @@ function OrderCard({
           {trackingNumber ? `Tracking ${trackingNumber}` : "No shipment tracking"}
         </span>
         <span>
+          <ShoppingBag size={15} aria-hidden="true" />
+          Packing: {summary.packingStatusLabel || "No package tasks"}
+        </span>
+        <span>
+          <Truck size={15} aria-hidden="true" />
+          Delivery: {summary.deliveryStatusLabel || summary.status}
+        </span>
+        <span>
           <ReceiptText size={15} aria-hidden="true" />
           {requestedItems.length} requested items
         </span>
@@ -1043,6 +1052,12 @@ function OrderCard({
           <ShoppingBag size={15} aria-hidden="true" />
           {summary.packageTasks.length} package tasks
         </span>
+        {summary.deliverySyncIssues?.length ? (
+          <span className="sync-warning-meta">
+            <AlertCircle size={15} aria-hidden="true" />
+            Scan log says {summary.deliverySyncIssues[0].scanLogEvidence?.[0]?.statusLabel || "delivery activity"}; package deliveryStatus missing
+          </span>
+        ) : null}
       </div>
 
       {expanded ? (
@@ -1311,6 +1326,7 @@ function ReceiptPanel({ summary, data, setNotice }) {
         shipments: data.shipments,
         deliveries: data.deliveries,
         packageTasks: data.packageTasks,
+        packageScanLogs: data.packageScanLogs,
         scopeLabel:
           mode === "open"
             ? "All open orders"
@@ -1320,6 +1336,7 @@ function ReceiptPanel({ summary, data, setNotice }) {
       }),
     [
       data.deliveries,
+      data.packageScanLogs,
       data.packageTasks,
       data.purchases,
       data.shipments,

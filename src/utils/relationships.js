@@ -637,6 +637,94 @@ function getPackageTaskOrderReferenceValues(task = {}) {
   ]);
 }
 
+const PACKAGE_NUMBER_FIELDS = [
+  "packageNumber",
+  "packageNo",
+  "packageCode",
+  "packageId",
+  "packageLocalId",
+  "androidPackageId",
+  "androidPackageLocalId"
+];
+
+function getPackageTaskOrderValues(task = {}) {
+  return uniqueIdentityValues([
+    ...identityValuesFromFields(task, ORDER_RELATION_FIELDS),
+    ...flattenFieldValues(task, [
+      "orderId",
+      "orderLocalId",
+      "androidOrderId",
+      "androidOrderLocalId",
+      "orderFirestoreId",
+      "legacyOrderId",
+      "remoteOrderId",
+      "orderIds",
+      "orderIdsLocal",
+      "linkedOrderIds",
+      "order",
+      "orderPath",
+      "orderDocumentPath",
+      "orderDocumentReference",
+      "orderDocumentRef",
+      "orderRefPath",
+      "orderDocPath"
+    ])
+  ]);
+}
+
+function getPackageTaskCustomerValues(task = {}) {
+  return uniqueIdentityValues([
+    ...identityValuesFromFields(task, CUSTOMER_RELATION_FIELDS),
+    ...flattenFieldValues(task, [
+      "customerId",
+      "customerLocalId",
+      "androidCustomerId",
+      "androidCustomerLocalId",
+      "customerFirestoreId",
+      "remoteCustomerId",
+      "legacyCustomerId"
+    ])
+  ]);
+}
+
+function getPackageTaskPackageNumbers(task = {}) {
+  return uniqueIdentityValues(flattenFieldValues(task, PACKAGE_NUMBER_FIELDS));
+}
+
+export function getPackageTaskGroupKey(task = {}, index = 0) {
+  const packageNumber = firstText(...getPackageTaskPackageNumbers(task));
+  const orderKey = firstText(
+    ...getPackageTaskOrderValues(task),
+    ...getPackageTaskOrderReferenceValues(task)
+  );
+  const customerKey = firstText(...getPackageTaskCustomerValues(task));
+
+  if (packageNumber) {
+    return ["package", packageNumber, customerKey || orderKey]
+      .map(normalizeSearchText)
+      .filter(Boolean)
+      .join(":");
+  }
+
+  if (orderKey || customerKey) {
+    return ["order", orderKey, "customer", customerKey]
+      .map(normalizeSearchText)
+      .filter(Boolean)
+      .join(":");
+  }
+
+  return `task:${firstText(task.documentId, task.firestoreId, task.id, index)}`;
+}
+
+function getPackageGroupIdentity(tasks = []) {
+  return {
+    packageNumbers: uniqueIdentityValues(tasks.flatMap(getPackageTaskPackageNumbers)),
+    orderValues: uniqueIdentityValues(tasks.flatMap(getPackageTaskOrderValues)),
+    orderReferences: uniqueIdentityValues(tasks.flatMap(getPackageTaskOrderReferenceValues)),
+    customerValues: uniqueIdentityValues(tasks.flatMap(getPackageTaskCustomerValues))
+  };
+}
+
 export function getOrderPackageTasks(order, packageTasks = []) {
   const orderValues = uniqueIdentityValues([
     ...identityValues(order),
@@ -767,35 +855,404 @@ export function normalizePackageTaskStatus(task = {}) {
   return "pending";
 }
 
-export function isPackageTaskDelivered(task = {}) {
-  return normalizePackageTaskStatus(task) === "handedOver";
-}
+export const PACKING_STATUS = {
+  PENDING: "pending",
+  PARTIALLY_PACKED: "partiallyPacked",
+  PACKED: "packed",
+  HANDED_OVER: "handedOver"
+};
+
+export const PACKAGE_DELIVERY_STATUS = {
+  DELIVERED: "delivered",
+  OUT_FOR_DELIVERY: "outForDelivery",
+  RETURNED: "returned",
+  CANCELLED: "cancelled",
+  READY: "ready",
+  NOT_READY: "notReady",
+  SYNC_ISSUE: "syncIssue",
+  SHIPPED: "shipped",
+  OPEN: "open"
+};
 
 export const CUSTOMER_ORDER_STATUS = {
   PACKAGE_PENDING: "Package pending",
   PARTIALLY_PACKED: "Partially packed",
   PACKED: "Packed",
-  HANDED_OVER: "Handed over / delivered to customer",
+  PACKING_HANDED_OVER: "Packing handed over",
+  DELIVERED: "Delivered to customer",
+  OUT_FOR_DELIVERY: "Out for delivery",
+  RETURNED: "Returned",
+  CANCELLED: "Delivery cancelled",
+  READY: "Ready for delivery",
+  NOT_READY: "Not ready for delivery",
+  SYNC_ISSUE: "Delivery sync issue",
   OPEN: "Open",
   SHIPPED: "Shipped / in shipment"
 };
 
-function getPackageTaskAggregateStatus(packageTasks = []) {
+const DELIVERY_STATUS_LABELS = {
+  [PACKAGE_DELIVERY_STATUS.DELIVERED]: CUSTOMER_ORDER_STATUS.DELIVERED,
+  [PACKAGE_DELIVERY_STATUS.OUT_FOR_DELIVERY]: CUSTOMER_ORDER_STATUS.OUT_FOR_DELIVERY,
+  [PACKAGE_DELIVERY_STATUS.RETURNED]: CUSTOMER_ORDER_STATUS.RETURNED,
+  [PACKAGE_DELIVERY_STATUS.CANCELLED]: CUSTOMER_ORDER_STATUS.CANCELLED,
+  [PACKAGE_DELIVERY_STATUS.READY]: CUSTOMER_ORDER_STATUS.READY,
+  [PACKAGE_DELIVERY_STATUS.NOT_READY]: CUSTOMER_ORDER_STATUS.NOT_READY,
+  [PACKAGE_DELIVERY_STATUS.SYNC_ISSUE]: CUSTOMER_ORDER_STATUS.SYNC_ISSUE,
+  [PACKAGE_DELIVERY_STATUS.SHIPPED]: CUSTOMER_ORDER_STATUS.SHIPPED,
+  [PACKAGE_DELIVERY_STATUS.OPEN]: CUSTOMER_ORDER_STATUS.OPEN
+};
+
+const PACKING_STATUS_LABELS = {
+  [PACKING_STATUS.PENDING]: CUSTOMER_ORDER_STATUS.PACKAGE_PENDING,
+  [PACKING_STATUS.PARTIALLY_PACKED]: CUSTOMER_ORDER_STATUS.PARTIALLY_PACKED,
+  [PACKING_STATUS.PACKED]: CUSTOMER_ORDER_STATUS.PACKED,
+  [PACKING_STATUS.HANDED_OVER]: CUSTOMER_ORDER_STATUS.PACKING_HANDED_OVER
+};
+
+const DELIVERY_DATE_FIELDS = [
+  "deliveryUpdatedAt",
+  "deliveryUpdatedAtLocal",
+  "deliveredAt",
+  "deliveredAtLocal",
+  "returnedAt",
+  "returnedAtLocal",
+  "updatedAt",
+  "createdAt"
+];
+
+const SCAN_LOG_DELIVERY_STATUS_FIELDS = [
+  "deliveryStatus",
+  "status",
+  "scanStatus",
+  "event",
+  "eventType",
+  "action"
+];
+
+function normalizeDateValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "object") {
+    if (typeof value.toDate === "function") {
+      const date = value.toDate();
+      return date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : "";
+    }
+
+    if (Number.isFinite(Number(value.seconds))) {
+      const milliseconds = Number(value.seconds) * 1000 + Math.floor((Number(value.nanoseconds) || 0) / 1000000);
+      return new Date(milliseconds).toISOString();
+    }
+  }
+
+  return String(value || "").trim();
+}
+
+function getRecordTime(record = {}, fields = []) {
+  for (const field of fields) {
+    const dateValue = normalizeDateValue(record[field]);
+    const date = dateValue ? new Date(dateValue) : null;
+
+    if (date && !Number.isNaN(date.getTime())) {
+      return date.getTime();
+    }
+  }
+
+  return 0;
+}
+
+function normalizeDeliveryStatusValue(value) {
+  const token = normalizeStatusToken(value);
+
+  if (["delivered", "complete", "completed", "handover", "handedover"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.DELIVERED;
+  }
+
+  if (["outfordelivery", "outforpickup", "delivering", "onroute", "onway"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.OUT_FOR_DELIVERY;
+  }
+
+  if (["returned", "return", "returnedtoshop", "returnedtosender"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.RETURNED;
+  }
+
+  if (["cancelled", "canceled"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.CANCELLED;
+  }
+
+  if (["ready", "readyfordelivery"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.READY;
+  }
+
+  if (["notready", "pending", "notdelivered"].includes(token)) {
+    return PACKAGE_DELIVERY_STATUS.NOT_READY;
+  }
+
+  return token || "";
+}
+
+export function normalizePackageTaskDeliveryStatus(task = {}) {
+  return normalizeDeliveryStatusValue(task.deliveryStatus);
+}
+
+export function isPackageTaskDelivered(task = {}) {
+  return normalizePackageTaskDeliveryStatus(task) === PACKAGE_DELIVERY_STATUS.DELIVERED;
+}
+
+function getPackingStatusLabel(status) {
+  return PACKING_STATUS_LABELS[status] || status || CUSTOMER_ORDER_STATUS.PACKAGE_PENDING;
+}
+
+function getDeliveryStatusLabel(status) {
+  return DELIVERY_STATUS_LABELS[status] || status || CUSTOMER_ORDER_STATUS.NOT_READY;
+}
+
+function getPackageTaskAggregatePackingStatus(packageTasks = []) {
   const packageStatuses = packageTasks.map(normalizePackageTaskStatus);
 
-  if (packageStatuses.every((status) => status === "handedOver")) {
-    return CUSTOMER_ORDER_STATUS.HANDED_OVER;
+  if (packageStatuses.every((status) => status === PACKING_STATUS.HANDED_OVER)) {
+    return PACKING_STATUS.HANDED_OVER;
   }
 
-  if (packageStatuses.every((status) => ["packed", "handedOver"].includes(status))) {
-    return CUSTOMER_ORDER_STATUS.PACKED;
+  if (packageStatuses.every((status) => [PACKING_STATUS.PACKED, PACKING_STATUS.HANDED_OVER].includes(status))) {
+    return PACKING_STATUS.PACKED;
   }
 
-  if (packageStatuses.some((status) => ["partiallyPacked", "packed", "handedOver"].includes(status))) {
-    return CUSTOMER_ORDER_STATUS.PARTIALLY_PACKED;
+  if (packageStatuses.some((status) => [PACKING_STATUS.PARTIALLY_PACKED, PACKING_STATUS.PACKED, PACKING_STATUS.HANDED_OVER].includes(status))) {
+    return PACKING_STATUS.PARTIALLY_PACKED;
   }
 
-  return CUSTOMER_ORDER_STATUS.PACKAGE_PENDING;
+  return PACKING_STATUS.PENDING;
+}
+
+function packagePackingIsReady(packageTasks = []) {
+  const packingStatus = getPackageTaskAggregatePackingStatus(packageTasks);
+
+  return [PACKING_STATUS.PACKED, PACKING_STATUS.HANDED_OVER].includes(packingStatus);
+}
+
+function getTaskDeliveryStatusEntry(task = {}) {
+  const status = normalizePackageTaskDeliveryStatus(task);
+
+  if (!status) {
+    return null;
+  }
+
+  return {
+    status,
+    time: getRecordTime(task, DELIVERY_DATE_FIELDS),
+    record: task
+  };
+}
+
+function selectPackageGroupDeliveryStatus(entries = []) {
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const latestDeliveredTime = Math.max(
+    0,
+    ...entries
+      .filter((entry) => entry.status === PACKAGE_DELIVERY_STATUS.DELIVERED)
+      .map((entry) => entry.time || 0)
+  );
+  const latestConflictingTime = Math.max(
+    0,
+    ...entries
+      .filter((entry) => entry.status !== PACKAGE_DELIVERY_STATUS.DELIVERED)
+      .map((entry) => entry.time || 0)
+  );
+
+  if (latestDeliveredTime > 0 && latestConflictingTime <= latestDeliveredTime) {
+    return PACKAGE_DELIVERY_STATUS.DELIVERED;
+  }
+
+  const grouped = new Map();
+
+  entries.forEach((entry) => {
+    const current = grouped.get(entry.status) || { count: 0, latestTime: 0 };
+    grouped.set(entry.status, {
+      count: current.count + 1,
+      latestTime: Math.max(current.latestTime, entry.time || 0)
+    });
+  });
+
+  return [...grouped.entries()]
+    .sort((leftEntry, rightEntry) => {
+      const left = leftEntry[1];
+      const right = rightEntry[1];
+
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+
+      return right.latestTime - left.latestTime;
+    })[0]?.[0] || entries[0].status;
+}
+
+function getScanLogDeliveryStatus(log = {}) {
+  return normalizeDeliveryStatusValue(
+    firstText(...SCAN_LOG_DELIVERY_STATUS_FIELDS.map((field) => log[field]))
+  );
+}
+
+function getScanLogOrderReferenceValues(log = {}) {
+  return uniqueIdentityValues([
+    log.orderReference,
+    log.orderRef,
+    log.orderNumber,
+    log.reference,
+    log.remoteOrderNumber
+  ]);
+}
+
+function scanLogMatchesPackageGroup(log = {}, groupIdentity = {}) {
+  const logPackageNumbers = uniqueIdentityValues(flattenFieldValues(log, PACKAGE_NUMBER_FIELDS));
+  const logOrderValues = uniqueIdentityValues([
+    ...identityValuesFromFields(log, ORDER_RELATION_FIELDS),
+    ...flattenFieldValues(log, ["orderId", "orderIds", "linkedOrderIds"])
+  ]);
+  const logCustomerValues = uniqueIdentityValues([
+    ...identityValuesFromFields(log, CUSTOMER_RELATION_FIELDS),
+    ...flattenFieldValues(log, ["customerId"])
+  ]);
+
+  if (valuesOverlap(logPackageNumbers, groupIdentity.packageNumbers)) {
+    return true;
+  }
+
+  if (valuesOverlap(logOrderValues, groupIdentity.orderValues)) {
+    return true;
+  }
+
+  if (textValuesOverlap(getScanLogOrderReferenceValues(log), groupIdentity.orderReferences)) {
+    return true;
+  }
+
+  return (
+    groupIdentity.orderValues.length === 0 &&
+    groupIdentity.orderReferences.length === 0 &&
+    valuesOverlap(logCustomerValues, groupIdentity.customerValues)
+  );
+}
+
+function getPackageGroupScanEvidence(groupIdentity = {}, packageScanLogs = []) {
+  return (Array.isArray(packageScanLogs) ? packageScanLogs : [])
+    .map((log) => ({
+      log,
+      status: getScanLogDeliveryStatus(log),
+      time: getRecordTime(log, ["deliveryUpdatedAt", "deliveryUpdatedAtLocal", "scannedAt", "scanTime", "timestamp", "updatedAt", "createdAt"])
+    }))
+    .filter(({ log, status }) =>
+      [
+        PACKAGE_DELIVERY_STATUS.DELIVERED,
+        PACKAGE_DELIVERY_STATUS.OUT_FOR_DELIVERY,
+        PACKAGE_DELIVERY_STATUS.RETURNED
+      ].includes(status) && scanLogMatchesPackageGroup(log, groupIdentity)
+    )
+    .sort((leftEntry, rightEntry) => (rightEntry.time || 0) - (leftEntry.time || 0));
+}
+
+export function getPackageTaskGroups(packageTasks = [], packageScanLogs = []) {
+  const groupsByKey = new Map();
+
+  (Array.isArray(packageTasks) ? packageTasks : []).forEach((task, index) => {
+    const key = getPackageTaskGroupKey(task, index);
+    const current = groupsByKey.get(key) || [];
+
+    current.push(task);
+    groupsByKey.set(key, current);
+  });
+
+  return [...groupsByKey.entries()].map(([key, tasks]) => {
+    const groupIdentity = getPackageGroupIdentity(tasks);
+    const packingStatus = getPackageTaskAggregatePackingStatus(tasks);
+    const deliveryEntries = tasks.map(getTaskDeliveryStatusEntry).filter(Boolean);
+    const scanLogEvidence = deliveryEntries.length === 0
+      ? getPackageGroupScanEvidence(groupIdentity, packageScanLogs)
+      : [];
+    const hasScanLogInconsistency = deliveryEntries.length === 0 && scanLogEvidence.length > 0;
+    const deliveryStatus = hasScanLogInconsistency
+      ? PACKAGE_DELIVERY_STATUS.SYNC_ISSUE
+      : selectPackageGroupDeliveryStatus(deliveryEntries) ||
+        (packagePackingIsReady(tasks) ? PACKAGE_DELIVERY_STATUS.READY : PACKAGE_DELIVERY_STATUS.NOT_READY);
+
+    return {
+      key,
+      tasks,
+      identity: groupIdentity,
+      packingStatus,
+      packingStatusLabel: getPackingStatusLabel(packingStatus),
+      deliveryStatus,
+      deliveryStatusLabel: getDeliveryStatusLabel(deliveryStatus),
+      hasDeliveryStatus: deliveryEntries.length > 0,
+      hasScanLogInconsistency,
+      scanLogEvidence: scanLogEvidence.slice(0, 3).map(({ log, status, time }) => ({
+        status,
+        statusLabel: getDeliveryStatusLabel(status),
+        time,
+        documentId: firstText(log.documentId, log.firestoreId, log.id),
+        reference: firstText(log.orderReference, log.orderNumber, log.orderRef, log.reference)
+      }))
+    };
+  });
+}
+
+function aggregateOrderPackingStatus(packageGroups = []) {
+  const statuses = packageGroups.map((group) => group.packingStatus);
+
+  if (statuses.length === 0) {
+    return "";
+  }
+
+  if (statuses.every((status) => status === PACKING_STATUS.HANDED_OVER)) {
+    return PACKING_STATUS.HANDED_OVER;
+  }
+
+  if (statuses.every((status) => [PACKING_STATUS.PACKED, PACKING_STATUS.HANDED_OVER].includes(status))) {
+    return PACKING_STATUS.PACKED;
+  }
+
+  if (statuses.some((status) => [PACKING_STATUS.PARTIALLY_PACKED, PACKING_STATUS.PACKED, PACKING_STATUS.HANDED_OVER].includes(status))) {
+    return PACKING_STATUS.PARTIALLY_PACKED;
+  }
+
+  return PACKING_STATUS.PENDING;
+}
+
+function aggregateOrderDeliveryStatus(packageGroups = []) {
+  const statuses = packageGroups.map((group) => group.deliveryStatus);
+
+  if (statuses.length === 0) {
+    return "";
+  }
+
+  if (statuses.includes(PACKAGE_DELIVERY_STATUS.SYNC_ISSUE)) {
+    return PACKAGE_DELIVERY_STATUS.SYNC_ISSUE;
+  }
+
+  if (statuses.every((status) => status === PACKAGE_DELIVERY_STATUS.DELIVERED)) {
+    return PACKAGE_DELIVERY_STATUS.DELIVERED;
+  }
+
+  if (statuses.includes(PACKAGE_DELIVERY_STATUS.RETURNED)) {
+    return PACKAGE_DELIVERY_STATUS.RETURNED;
+  }
+
+  if (statuses.includes(PACKAGE_DELIVERY_STATUS.OUT_FOR_DELIVERY)) {
+    return PACKAGE_DELIVERY_STATUS.OUT_FOR_DELIVERY;
+  }
+
+  if (statuses.every((status) => status === PACKAGE_DELIVERY_STATUS.READY)) {
+    return PACKAGE_DELIVERY_STATUS.READY;
+  }
+
+  return PACKAGE_DELIVERY_STATUS.NOT_READY;
 }
 
 function orderHasShipmentLink(order = {}, shipment = null, delivery = null) {
@@ -834,12 +1291,78 @@ function orderMarkedForShipment(order = {}) {
   ].includes(token);
 }
 
-export function isCustomerFacingOrderDeliveredStatus(status) {
-  return status === CUSTOMER_ORDER_STATUS.HANDED_OVER;
+function getFallbackOrderStatusDetail(order = {}, shipments = [], deliveries = [], purchases = []) {
+  const explicitStatus = firstText(order.status, order.orderStatus);
+  const shipment = getOrderShipment(order, shipments);
+  const delivery = getOrderDelivery(order, deliveries, shipments);
+  const deliveryStatus = orderMarkedForShipment(order) || orderHasShipmentLink(order, shipment, delivery)
+    ? PACKAGE_DELIVERY_STATUS.SHIPPED
+    : PACKAGE_DELIVERY_STATUS.OPEN;
+
+  if (deliveryStatus === PACKAGE_DELIVERY_STATUS.OPEN && normalizeStatusToken(explicitStatus) !== "open" && !orderHasItems(order, purchases)) {
+    return {
+      deliveryStatus: PACKAGE_DELIVERY_STATUS.OPEN,
+      deliveryStatusLabel: explicitStatus || CUSTOMER_ORDER_STATUS.OPEN,
+      packingStatus: "",
+      packingStatusLabel: "No package tasks",
+      packageGroups: [],
+      deliverySyncIssues: []
+    };
+  }
+
+  return {
+    deliveryStatus,
+    deliveryStatusLabel: getDeliveryStatusLabel(deliveryStatus),
+    packingStatus: "",
+    packingStatusLabel: "No package tasks",
+    packageGroups: [],
+    deliverySyncIssues: []
+  };
 }
 
-export function isCustomerFacingOrderOpenStatus(status) {
-  return status === CUSTOMER_ORDER_STATUS.OPEN;
+export function isCustomerFacingOrderDeliveredStatus(statusOrSummary) {
+  if (statusOrSummary && typeof statusOrSummary === "object") {
+    return statusOrSummary.deliveryStatus === PACKAGE_DELIVERY_STATUS.DELIVERED;
+  }
+
+  return statusOrSummary === CUSTOMER_ORDER_STATUS.DELIVERED;
+}
+
+export function isCustomerFacingOrderOpenStatus(statusOrSummary) {
+  if (statusOrSummary && typeof statusOrSummary === "object") {
+    return statusOrSummary.deliveryStatus === PACKAGE_DELIVERY_STATUS.OPEN;
+  }
+
+  return statusOrSummary === CUSTOMER_ORDER_STATUS.OPEN;
+}
+
+export function getCustomerFacingOrderStatusDetail(
+  order = {},
+  packageTasks = [],
+  shipments = [],
+  deliveries = [],
+  purchases = [],
+  packageScanLogs = []
+) {
+  const orderPackageTasks = getOrderPackageTasks(order, packageTasks);
+
+  if (orderPackageTasks.length === 0) {
+    return getFallbackOrderStatusDetail(order, shipments, deliveries, purchases);
+  }
+
+  const packageGroups = getPackageTaskGroups(orderPackageTasks, packageScanLogs);
+  const packingStatus = aggregateOrderPackingStatus(packageGroups);
+  const deliveryStatus = aggregateOrderDeliveryStatus(packageGroups);
+  const deliverySyncIssues = packageGroups.filter((group) => group.hasScanLogInconsistency);
+
+  return {
+    deliveryStatus,
+    deliveryStatusLabel: getDeliveryStatusLabel(deliveryStatus),
+    packingStatus,
+    packingStatusLabel: getPackingStatusLabel(packingStatus),
+    packageGroups,
+    deliverySyncIssues
+  };
 }
 
 export function getCustomerFacingOrderStatus(
@@ -847,27 +1370,17 @@ export function getCustomerFacingOrderStatus(
   packageTasks = [],
   shipments = [],
   deliveries = [],
-  purchases = []
+  purchases = [],
+  packageScanLogs = []
 ) {
-  const orderPackageTasks = getOrderPackageTasks(order, packageTasks);
-
-  if (orderPackageTasks.length > 0) {
-    return getPackageTaskAggregateStatus(orderPackageTasks);
-  }
-
-  const explicitStatus = firstText(order.status, order.orderStatus);
-  const shipment = getOrderShipment(order, shipments);
-  const delivery = getOrderDelivery(order, deliveries, shipments);
-
-  if (orderMarkedForShipment(order) || orderHasShipmentLink(order, shipment, delivery)) {
-    return CUSTOMER_ORDER_STATUS.SHIPPED;
-  }
-
-  if (normalizeStatusToken(explicitStatus) === "open" || orderHasItems(order, purchases)) {
-    return CUSTOMER_ORDER_STATUS.OPEN;
-  }
-
-  return explicitStatus || CUSTOMER_ORDER_STATUS.OPEN;
+  return getCustomerFacingOrderStatusDetail(
+    order,
+    packageTasks,
+    shipments,
+    deliveries,
+    purchases,
+    packageScanLogs
+  ).deliveryStatusLabel;
 }
 
 export function getOrderStatus(order = {}, shipments = [], deliveries = [], packageTasks = []) {
@@ -885,13 +1398,22 @@ export function getOrderSummary(
   purchases = [],
   shipments = [],
   deliveries = [],
-  packageTasks = []
+  packageTasks = [],
+  packageScanLogs = []
 ) {
   const orderPurchases = getOrderPurchases(order, purchases);
   const shipment = getOrderShipment(order, shipments);
   const delivery = getOrderDelivery(order, deliveries, shipments);
   const tasks = getOrderPackageTasks(order, packageTasks);
   const currencyTotals = getPurchaseCurrencyTotals(orderPurchases);
+  const statusDetail = getCustomerFacingOrderStatusDetail(
+    order,
+    packageTasks,
+    shipments,
+    deliveries,
+    orderPurchases,
+    packageScanLogs
+  );
 
   return {
     purchases: orderPurchases,
@@ -904,7 +1426,13 @@ export function getOrderSummary(
     shipment,
     delivery,
     packageTasks: tasks,
-    status: getCustomerFacingOrderStatus(order, packageTasks, shipments, deliveries, orderPurchases)
+    packageGroups: statusDetail.packageGroups,
+    packingStatus: statusDetail.packingStatus,
+    packingStatusLabel: statusDetail.packingStatusLabel,
+    deliveryStatus: statusDetail.deliveryStatus,
+    deliveryStatusLabel: statusDetail.deliveryStatusLabel,
+    deliverySyncIssues: statusDetail.deliverySyncIssues,
+    status: statusDetail.deliveryStatusLabel
   };
 }
 
@@ -957,7 +1485,7 @@ function dedupeRecordsByIdentity(records = []) {
 
 export function buildCustomerSummary(
   customer,
-  { orders = [], purchases = [], requestedItems = [], shipments = [], deliveries = [], packageTasks = [] }
+  { orders = [], purchases = [], requestedItems = [], shipments = [], deliveries = [], packageTasks = [], packageScanLogs = [] }
 ) {
   const customerOrders = getCustomerOrders(customer, orders);
   const customerPurchases = getCustomerPurchases(customer, purchases);
@@ -979,7 +1507,7 @@ export function buildCustomerSummary(
   );
   const pendingRequestedItems = customerRequestedItems.filter(isPendingRequestedItem);
   const orderSummaries = customerOrders.map((order) =>
-    getOrderSummary(order, purchases, shipments, deliveries, packageTasks)
+    getOrderSummary(order, purchases, shipments, deliveries, packageTasks, packageScanLogs)
   );
   const shipmentsForOrders = dedupeRecordsByIdentity(orderSummaries
     .map((summary) => summary.shipment)

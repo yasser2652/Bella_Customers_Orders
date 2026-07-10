@@ -354,6 +354,7 @@ export function buildReceiptModel({
   shipments = [],
   deliveries = [],
   packageTasks = [],
+  packageScanLogs = [],
   scopeLabel = "Selected orders"
 }) {
   const orderRows = (Array.isArray(orders) ? orders : []).map((order) => {
@@ -363,7 +364,8 @@ export function buildReceiptModel({
       purchases,
       shipments,
       deliveries,
-      packageTasks
+      packageTasks,
+      packageScanLogs
     );
 
     return {
