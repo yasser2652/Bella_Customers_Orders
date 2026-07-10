@@ -1,4 +1,4 @@
-const CACHE_NAME = "bella-customers-orders-v1";
+const CACHE_NAME = "bella-customers-orders-v2-delivery-status";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -28,6 +28,16 @@ self.addEventListener("activate", (event) => {
         )
       )
       .then(() => self.clients.claim())
+      .then(() =>
+        self.clients.matchAll({ type: "window", includeUncontrolled: true })
+      )
+      .then((clients) =>
+        Promise.all(
+          clients.map((client) =>
+            client.url && client.navigate ? client.navigate(client.url) : Promise.resolve()
+          )
+        )
+      )
   );
 });
 
