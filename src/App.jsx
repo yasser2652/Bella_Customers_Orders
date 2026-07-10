@@ -28,10 +28,9 @@ import {
   X
 } from "lucide-react";
 import {
-  AUTHORIZED_BELLA_USER_UID,
   getFirebaseConfigStatus,
+  isEmailPasswordFirebaseUser,
   signInBellaEmail,
-  signInBellaGoogle,
   signOutBellaUser,
   subscribeToBellaAuthState
 } from "./firebase.js";
@@ -126,21 +125,17 @@ function getErrorMessage(error) {
   }
 
   if (error.code === "permission-denied") {
-    return "Missing or insufficient permissions. Sign in with the authorized Bella Boutique account or check Firestore rules.";
+    return "Missing or insufficient permissions. Sign in with your Firebase email/password account or check Firestore rules.";
   }
 
   if (error.code === "FIREBASE_NOT_CONFIGURED") {
     return `Firebase is not configured. Missing: ${(error.missing || []).join(", ")}`;
   }
 
-  if (error.code === "auth/not-authorized") {
-    return "This Firebase account is not authorized for Bella Customer Orders.";
-  }
-
   const message = String(error.message || error);
 
   if (message.toLowerCase().includes("missing or insufficient permissions")) {
-    return "Missing or insufficient permissions. Sign in with the authorized Bella Boutique account or check Firestore rules.";
+    return "Missing or insufficient permissions. Sign in with your Firebase email/password account or check Firestore rules.";
   }
 
   return message;
@@ -250,10 +245,6 @@ function getLoginErrorMessage(error) {
     return "";
   }
 
-  if (error.code === "auth/not-authorized") {
-    return "This Firebase account is not authorized for Bella Customer Orders.";
-  }
-
   if (error.code === "FIREBASE_NOT_CONFIGURED") {
     return `Firebase is not configured. Missing: ${(error.missing || []).join(", ")}`;
   }
@@ -263,18 +254,11 @@ function getLoginErrorMessage(error) {
       "auth/invalid-credential",
       "auth/invalid-email",
       "auth/user-not-found",
-      "auth/wrong-password"
+      "auth/wrong-password",
+      "auth/login-required"
     ].includes(error.code)
   ) {
-    return "Email or password is not correct for the authorized Firebase user.";
-  }
-
-  if (error.code === "auth/popup-closed-by-user") {
-    return "Google sign-in was closed before it finished.";
-  }
-
-  if (error.code === "auth/popup-blocked") {
-    return "The browser blocked the Google sign-in popup. Allow popups or use email/password.";
+    return "Enter the email and password for your Firebase user.";
   }
 
   return String(error.message || error);
@@ -305,14 +289,16 @@ function useBellaAuth() {
           return;
         }
 
-        if (user.uid === AUTHORIZED_BELLA_USER_UID) {
+        if (isEmailPasswordFirebaseUser(user)) {
           setAuthState({ status: "authorized", user, error: null });
           return;
         }
 
-        const error = new Error("This Firebase account is not authorized for Bella Customer Orders.");
-        error.code = "auth/not-authorized";
-        setAuthState({ status: "denied", user, error });
+        signOutBellaUser()
+          .catch(() => {})
+          .finally(() => {
+            setAuthState({ status: "signed-out", user: null, error: null });
+          });
       },
       (error) => setAuthState({ status: "error", user: null, error })
     );
@@ -343,31 +329,7 @@ function LoginScreen({ authState }) {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setSubmitting(true);
-    setLoginError("");
 
-    try {
-      await signInBellaGoogle();
-    } catch (error) {
-      setLoginError(getLoginErrorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    setSubmitting(true);
-    setLoginError("");
-
-    try {
-      await signOutBellaUser();
-    } catch (error) {
-      setLoginError(getLoginErrorMessage(error));
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   return (
     <div className="app-shell auth-shell">
@@ -391,7 +353,7 @@ function LoginScreen({ authState }) {
             <div>
               <p className="eyebrow">Secure access</p>
               <h2 id="login-title">Staff login</h2>
-              <p>Only the authorized Bella Boutique Firebase user can open this workspace.</p>
+              <p>Enter your Firebase email and password to open this workspace.</p>
             </div>
           </div>
 
@@ -405,17 +367,6 @@ function LoginScreen({ authState }) {
           {authError ? <p className="warning-text">{authError}</p> : null}
           {loginError ? <p className="warning-text">{loginError}</p> : null}
 
-          {authState.status === "denied" ? (
-            <div className="auth-denied-actions">
-              <p className="helper-text">
-                Signed in UID: {authState.user?.uid || "unknown"}. Use the authorized account instead.
-              </p>
-              <button className="button secondary" type="button" onClick={handleSignOut} disabled={submitting}>
-                <LogOut size={16} aria-hidden="true" />
-                Use another account
-              </button>
-            </div>
-          ) : null}
 
           <form className="auth-form" onSubmit={handleEmailLogin}>
             <label className="field">
@@ -446,14 +397,6 @@ function LoginScreen({ authState }) {
               <button className="button" type="submit" disabled={disabled}>
                 <ShieldCheck size={16} aria-hidden="true" />
                 {submitting ? "Signing in..." : "Sign in"}
-              </button>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={handleGoogleLogin}
-                disabled={disabled}
-              >
-                Sign in with Google
               </button>
             </div>
           </form>
@@ -2532,7 +2475,7 @@ function CustomerOrdersWorkspace({ dataState, authUser }) {
             collectionCounts={collectionCounts}
           />
           <div className="user-strip">
-            <span>{authUser.email || authUser.uid}</span>
+            <span>{authUser.email}</span>
             <button className="button secondary compact-button" type="button" onClick={handleWorkspaceSignOut}>
               <LogOut size={15} aria-hidden="true" />
               Sign out

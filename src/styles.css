@@ -270,8 +270,7 @@ p {
   gap: 12px;
 }
 
-.auth-actions,
-.auth-denied-actions {
+.auth-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1419,8 +1418,7 @@ td a {
     grid-template-columns: 1fr;
   }
 
-  .auth-actions .button,
-  .auth-denied-actions .button {
+  .auth-actions .button {
     width: 100%;
   }
 
