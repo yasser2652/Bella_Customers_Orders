@@ -11,6 +11,8 @@ import {
   Eye,
   FileDown,
   Loader2,
+  Lock,
+  LogOut,
   MessageCircle,
   Pencil,
   Phone,
@@ -18,13 +20,21 @@ import {
   ReceiptText,
   Save,
   Search,
+  ShieldCheck,
   ShoppingBag,
   Truck,
   Users,
   WifiOff,
   X
 } from "lucide-react";
-import { getFirebaseConfigStatus } from "./firebase.js";
+import {
+  AUTHORIZED_BELLA_USER_UID,
+  getFirebaseConfigStatus,
+  signInBellaEmail,
+  signInBellaGoogle,
+  signOutBellaUser,
+  subscribeToBellaAuthState
+} from "./firebase.js";
 import {
   FIRESTORE_READ_COLLECTIONS,
   subscribeToFirestoreCollection
@@ -84,10 +94,19 @@ import {
 } from "./utils/receipts.js";
 import "./styles.css";
 
-const INITIAL_DATA = FIRESTORE_READ_COLLECTIONS.reduce((data, collectionName) => {
-  data[collectionName] = [];
-  return data;
-}, {});
+function createInitialData() {
+  return FIRESTORE_READ_COLLECTIONS.reduce((data, collectionName) => {
+    data[collectionName] = [];
+    return data;
+  }, {});
+}
+
+function createInitialCollectionState(status = "pending") {
+  return FIRESTORE_READ_COLLECTIONS.reduce((state, collectionName) => {
+    state[collectionName] = status;
+    return state;
+  }, {});
+}
 
 function useDebouncedValue(value, delayMs = 180) {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -107,29 +126,30 @@ function getErrorMessage(error) {
   }
 
   if (error.code === "permission-denied") {
-    return "Missing or insufficient permissions. Anonymous auth or Firestore rules may need attention.";
+    return "Missing or insufficient permissions. Sign in with the authorized Bella Boutique account or check Firestore rules.";
   }
 
   if (error.code === "FIREBASE_NOT_CONFIGURED") {
     return `Firebase is not configured. Missing: ${(error.missing || []).join(", ")}`;
   }
 
+  if (error.code === "auth/not-authorized") {
+    return "This Firebase account is not authorized for Bella Customer Orders.";
+  }
+
   const message = String(error.message || error);
 
   if (message.toLowerCase().includes("missing or insufficient permissions")) {
-    return "Missing or insufficient permissions. Anonymous auth or Firestore rules may need attention.";
+    return "Missing or insufficient permissions. Sign in with the authorized Bella Boutique account or check Firestore rules.";
   }
 
   return message;
 }
 
-function useBellaData() {
-  const [data, setData] = useState(INITIAL_DATA);
+function useBellaData(enabled) {
+  const [data, setData] = useState(() => createInitialData());
   const [collectionState, setCollectionState] = useState(() =>
-    FIRESTORE_READ_COLLECTIONS.reduce((state, collectionName) => {
-      state[collectionName] = "pending";
-      return state;
-    }, {})
+    createInitialCollectionState()
   );
   const [errors, setErrors] = useState([]);
   const [online, setOnline] = useState(() =>
@@ -150,6 +170,13 @@ function useBellaData() {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      setData(createInitialData());
+      setErrors([]);
+      setCollectionState(createInitialCollectionState());
+      return undefined;
+    }
+
     const configStatus = getFirebaseConfigStatus();
 
     if (!configStatus.configured) {
@@ -157,12 +184,7 @@ function useBellaData() {
       error.code = "FIREBASE_NOT_CONFIGURED";
       error.missing = configStatus.missing;
       setErrors([{ collectionName: "firebase", error }]);
-      setCollectionState((currentState) =>
-        FIRESTORE_READ_COLLECTIONS.reduce((state, collectionName) => {
-          state[collectionName] = "error";
-          return state;
-        }, { ...currentState })
-      );
+      setCollectionState(createInitialCollectionState("error"));
       return undefined;
     }
 
@@ -198,7 +220,7 @@ function useBellaData() {
     return () => {
       unsubscribes.forEach((unsubscribe) => unsubscribe());
     };
-  }, []);
+  }, [enabled]);
 
   const pendingCollections = FIRESTORE_READ_COLLECTIONS.filter(
     (collectionName) => collectionState[collectionName] === "pending"
@@ -223,6 +245,223 @@ function useBellaData() {
   };
 }
 
+function getLoginErrorMessage(error) {
+  if (!error) {
+    return "";
+  }
+
+  if (error.code === "auth/not-authorized") {
+    return "This Firebase account is not authorized for Bella Customer Orders.";
+  }
+
+  if (error.code === "FIREBASE_NOT_CONFIGURED") {
+    return `Firebase is not configured. Missing: ${(error.missing || []).join(", ")}`;
+  }
+
+  if (
+    [
+      "auth/invalid-credential",
+      "auth/invalid-email",
+      "auth/user-not-found",
+      "auth/wrong-password"
+    ].includes(error.code)
+  ) {
+    return "Email or password is not correct for the authorized Firebase user.";
+  }
+
+  if (error.code === "auth/popup-closed-by-user") {
+    return "Google sign-in was closed before it finished.";
+  }
+
+  if (error.code === "auth/popup-blocked") {
+    return "The browser blocked the Google sign-in popup. Allow popups or use email/password.";
+  }
+
+  return String(error.message || error);
+}
+
+function useBellaAuth() {
+  const [authState, setAuthState] = useState({
+    status: "checking",
+    user: null,
+    error: null
+  });
+
+  useEffect(() => {
+    const configStatus = getFirebaseConfigStatus();
+
+    if (!configStatus.configured) {
+      const error = new Error("Firebase is not configured.");
+      error.code = "FIREBASE_NOT_CONFIGURED";
+      error.missing = configStatus.missing;
+      setAuthState({ status: "config-error", user: null, error });
+      return undefined;
+    }
+
+    return subscribeToBellaAuthState(
+      (user) => {
+        if (!user) {
+          setAuthState({ status: "signed-out", user: null, error: null });
+          return;
+        }
+
+        if (user.uid === AUTHORIZED_BELLA_USER_UID) {
+          setAuthState({ status: "authorized", user, error: null });
+          return;
+        }
+
+        const error = new Error("This Firebase account is not authorized for Bella Customer Orders.");
+        error.code = "auth/not-authorized";
+        setAuthState({ status: "denied", user, error });
+      },
+      (error) => setAuthState({ status: "error", user: null, error })
+    );
+  }, []);
+
+  return authState;
+}
+
+function LoginScreen({ authState }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const authError = getLoginErrorMessage(authState.error);
+  const disabled = submitting || authState.status === "checking" || authState.status === "config-error";
+
+  const handleEmailLogin = async (event) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setLoginError("");
+
+    try {
+      await signInBellaEmail(email, password);
+    } catch (error) {
+      setLoginError(getLoginErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setSubmitting(true);
+    setLoginError("");
+
+    try {
+      await signInBellaGoogle();
+    } catch (error) {
+      setLoginError(getLoginErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setSubmitting(true);
+    setLoginError("");
+
+    try {
+      await signOutBellaUser();
+    } catch (error) {
+      setLoginError(getLoginErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="app-shell auth-shell">
+      <header className="app-header auth-header">
+        <div className="brand-mark">
+          <img src="/bella-butterfly.png" alt="Bella Boutique logo" />
+        </div>
+        <div>
+          <p className="eyebrow">Bella Boutique</p>
+          <h1>Customer Orders</h1>
+          <p>Sign in to view customers, orders, receipts, and delivery payments.</p>
+        </div>
+      </header>
+
+      <main className="auth-panel" aria-labelledby="login-title">
+        <section className="auth-card">
+          <div className="auth-card-header">
+            <div className="auth-icon" aria-hidden="true">
+              <Lock size={24} />
+            </div>
+            <div>
+              <p className="eyebrow">Secure access</p>
+              <h2 id="login-title">Staff login</h2>
+              <p>Only the authorized Bella Boutique Firebase user can open this workspace.</p>
+            </div>
+          </div>
+
+          {authState.status === "checking" ? (
+            <p className="auth-state">
+              <Loader2 className="spin" size={16} aria-hidden="true" />
+              Checking saved sign-in...
+            </p>
+          ) : null}
+
+          {authError ? <p className="warning-text">{authError}</p> : null}
+          {loginError ? <p className="warning-text">{loginError}</p> : null}
+
+          {authState.status === "denied" ? (
+            <div className="auth-denied-actions">
+              <p className="helper-text">
+                Signed in UID: {authState.user?.uid || "unknown"}. Use the authorized account instead.
+              </p>
+              <button className="button secondary" type="button" onClick={handleSignOut} disabled={submitting}>
+                <LogOut size={16} aria-hidden="true" />
+                Use another account
+              </button>
+            </div>
+          ) : null}
+
+          <form className="auth-form" onSubmit={handleEmailLogin}>
+            <label className="field">
+              <span>Email</span>
+              <input
+                className="input"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                disabled={disabled}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                disabled={disabled}
+                required
+              />
+            </label>
+            <div className="auth-actions">
+              <button className="button" type="submit" disabled={disabled}>
+                <ShieldCheck size={16} aria-hidden="true" />
+                {submitting ? "Signing in..." : "Sign in"}
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={handleGoogleLogin}
+                disabled={disabled}
+              >
+                Sign in with Google
+              </button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+  );
+}
 function StatusIndicator({ status, errors, loadedCollections, pendingCollections, collectionCounts = [] }) {
   const labels = {
     connected: "Connected",
@@ -2143,8 +2382,8 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
   );
 }
 
-function App() {
-  const { data, errors, loadedCollections, pendingCollections, status } = useBellaData();
+function CustomerOrdersWorkspace({ dataState, authUser }) {
+  const { data, errors, loadedCollections, pendingCollections, status } = dataState;
   const searchPanelRef = useRef(null);
   const profilePanelRef = useRef(null);
   const [query, setQuery] = useState("");
@@ -2262,6 +2501,16 @@ function App() {
       block: "start"
     });
   };
+  const handleWorkspaceSignOut = async () => {
+    try {
+      await signOutBellaUser();
+    } catch (error) {
+      setNotice({
+        tone: "warning",
+        message: getErrorMessage(error) || "Sign out failed."
+      });
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -2274,13 +2523,22 @@ function App() {
           <h1>Customer Orders</h1>
           <p>Customer, order, receipt, and delivery payment workspace.</p>
         </div>
-        <StatusIndicator
-          status={status}
-          errors={errors}
-          loadedCollections={loadedCollections}
-          pendingCollections={pendingCollections}
-          collectionCounts={collectionCounts}
-        />
+        <div className="header-side">
+          <StatusIndicator
+            status={status}
+            errors={errors}
+            loadedCollections={loadedCollections}
+            pendingCollections={pendingCollections}
+            collectionCounts={collectionCounts}
+          />
+          <div className="user-strip">
+            <span>{authUser.email || authUser.uid}</span>
+            <button className="button secondary compact-button" type="button" onClick={handleWorkspaceSignOut}>
+              <LogOut size={15} aria-hidden="true" />
+              Sign out
+            </button>
+          </div>
+        </div>
       </header>
 
       <ErrorBanner errors={errors} />
@@ -2336,4 +2594,15 @@ function App() {
   );
 }
 
+function App() {
+  const authState = useBellaAuth();
+  const isAuthorized = authState.status === "authorized";
+  const dataState = useBellaData(isAuthorized);
+
+  if (!isAuthorized) {
+    return <LoginScreen authState={authState} />;
+  }
+
+  return <CustomerOrdersWorkspace dataState={dataState} authUser={authState.user} />;
+}
 export default App;

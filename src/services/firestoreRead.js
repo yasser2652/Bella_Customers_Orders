@@ -1,5 +1,5 @@
 import { collection, onSnapshot } from "firebase/firestore";
-import { ensureAnonymousFirebaseUser, getFirestoreDb } from "../firebase.js";
+import { ensureAuthorizedFirebaseUser, getFirestoreDb } from "../firebase.js";
 import { uniqueIdentityValues } from "../utils/identity.js";
 
 export const FIRESTORE_READ_COLLECTIONS = [
@@ -111,7 +111,7 @@ export function subscribeToFirestoreCollection(collectionName, onData, onError) 
   let unsubscribe = () => {};
   let cancelled = false;
 
-  ensureAnonymousFirebaseUser()
+  ensureAuthorizedFirebaseUser()
     .then(() => {
       if (cancelled) {
         return;

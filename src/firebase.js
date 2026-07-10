@@ -1,8 +1,16 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 export const FIREBASE_NOT_CONFIGURED_CODE = "FIREBASE_NOT_CONFIGURED";
+export const AUTHORIZED_BELLA_USER_UID = "DpDO8x2lERecpHYKdj9jGcXB4y52";
 
 const FIREBASE_ENV_FIELDS = [
   ["apiKey", "REACT_APP_FIREBASE_API_KEY", "VITE_FIREBASE_API_KEY"],
@@ -76,14 +84,66 @@ export function getFirestoreDb() {
   return getFirestore(getFirebaseAppInstance());
 }
 
-export async function ensureAnonymousFirebaseUser() {
+export function isAuthorizedBellaUser(user) {
+  return Boolean(user && user.uid === AUTHORIZED_BELLA_USER_UID);
+}
+
+export function createUnauthorizedUserError() {
+  const error = new Error("This Firebase account is not authorized for Bella Customer Orders.");
+  error.code = "auth/not-authorized";
+  error.allowedUid = AUTHORIZED_BELLA_USER_UID;
+  return error;
+}
+
+export function subscribeToBellaAuthState(onChange, onError) {
+  try {
+    return onAuthStateChanged(getFirebaseAuthInstance(), onChange, onError);
+  } catch (error) {
+    onError(error);
+    return () => {};
+  }
+}
+
+export async function signInBellaEmail(email, password) {
+  const auth = getFirebaseAuthInstance();
+  const credential = await signInWithEmailAndPassword(
+    auth,
+    String(email || "").trim(),
+    password
+  );
+
+  if (!isAuthorizedBellaUser(credential.user)) {
+    await signOut(auth);
+    throw createUnauthorizedUserError();
+  }
+
+  return credential.user;
+}
+
+export async function signInBellaGoogle() {
+  const auth = getFirebaseAuthInstance();
+  const provider = new GoogleAuthProvider();
+  const credential = await signInWithPopup(auth, provider);
+
+  if (!isAuthorizedBellaUser(credential.user)) {
+    await signOut(auth);
+    throw createUnauthorizedUserError();
+  }
+
+  return credential.user;
+}
+
+export async function signOutBellaUser() {
+  await signOut(getFirebaseAuthInstance());
+}
+
+export async function ensureAuthorizedFirebaseUser() {
   const auth = getFirebaseAuthInstance();
 
-  if (auth.currentUser) {
+  if (isAuthorizedBellaUser(auth.currentUser)) {
     return auth.currentUser;
   }
 
-  const credential = await signInAnonymously(auth);
-  return credential.user;
+  throw createUnauthorizedUserError();
 }
 

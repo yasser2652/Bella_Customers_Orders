@@ -1,5 +1,5 @@
 import { doc, increment, updateDoc } from "firebase/firestore";
-import { ensureAnonymousFirebaseUser, getFirestoreDb } from "../firebase.js";
+import { ensureAuthorizedFirebaseUser, getFirestoreDb } from "../firebase.js";
 import { firstText, roundCurrencyAmount } from "../utils/relationships.js";
 
 const CUSTOMER_FIELD_ALIASES = {
@@ -63,7 +63,7 @@ export async function updateCustomerInfo(customer = {}, values = {}) {
     throw new Error("Cannot update this customer because the Firestore document id is missing.");
   }
 
-  await ensureAnonymousFirebaseUser();
+  await ensureAuthorizedFirebaseUser();
   await updateDoc(
     doc(getFirestoreDb(), "customers", documentId),
     buildCustomerUpdatePatch(customer, values)
@@ -145,7 +145,7 @@ export async function addPackageTaskPayment(packageTask = {}, values = {}) {
     throw new Error("Cannot update this package task because the Firestore document id is missing.");
   }
 
-  await ensureAnonymousFirebaseUser();
+  await ensureAuthorizedFirebaseUser();
   await updateDoc(
     doc(getFirestoreDb(), "packageTasks", documentId),
     buildPackageTaskPaymentPatch(packageTask, values)
@@ -158,7 +158,7 @@ export async function correctPackageTaskPayment(packageTask = {}, values = {}) {
     throw new Error("Cannot update this package task because the Firestore document id is missing.");
   }
 
-  await ensureAnonymousFirebaseUser();
+  await ensureAuthorizedFirebaseUser();
   await updateDoc(
     doc(getFirestoreDb(), "packageTasks", documentId),
     buildPackageTaskPaymentCorrectionPatch(packageTask, values)

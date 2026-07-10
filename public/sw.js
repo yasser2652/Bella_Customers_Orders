@@ -1,4 +1,4 @@
-const CACHE_NAME = "bella-customers-orders-v2-delivery-status";
+const CACHE_NAME = "bella-customers-orders-v3-secure-login";
 const APP_SHELL = [
   "/",
   "/index.html",

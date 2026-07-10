@@ -181,6 +181,111 @@ p {
   color: var(--muted);
 }
 
+.header-side {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  min-width: min(430px, 100%);
+}
+
+.user-strip {
+  max-width: 430px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.user-strip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-button {
+  min-height: 32px;
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
+.auth-shell {
+  width: min(980px, 100%);
+}
+
+.auth-header {
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+
+.auth-panel {
+  display: grid;
+  place-items: start center;
+}
+
+.auth-card {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  box-shadow: 0 14px 34px var(--shadow);
+}
+
+.auth-card-header {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 13px;
+  align-items: start;
+}
+
+.auth-card-header h2 {
+  margin-top: 3px;
+  line-height: 1.1;
+}
+
+.auth-card-header p:not(.eyebrow) {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.auth-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-warm);
+  color: var(--accent-strong);
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.auth-actions,
+.auth-denied-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.auth-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-weight: 750;
+}
+
 .eyebrow {
   color: var(--accent);
   font-size: 0.74rem;
@@ -1289,6 +1394,34 @@ td a {
     min-width: 0;
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .header-side {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .user-strip {
+    max-width: none;
+    justify-content: space-between;
+  }
+
+  .auth-header {
+    grid-template-columns: 62px minmax(0, 1fr);
+  }
+
+  .auth-card {
+    padding: 16px;
+  }
+
+  .auth-card-header {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-actions .button,
+  .auth-denied-actions .button {
+    width: 100%;
   }
 
   .section-title-row,
