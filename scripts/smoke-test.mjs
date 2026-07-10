@@ -134,6 +134,19 @@ assert.equal(
   "LYD 60.00 + USD 20.00 + CAD 10.00"
 );
 assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 1);
+assert.equal(formatCurrencyTotals(paymentSummary.deliveredRemainingTotals), "CAD 10.00");
+assert.equal(paymentSummary.hasDeliveredOutstandingBalance, true);
+
+const awaitingDeliverySummary = buildCustomerSummary(customer, {
+  ...data,
+  shipments: [],
+  deliveries: [],
+  packageTasks: [{ ...packageTasks[0], status: "ready" }]
+});
+const awaitingDeliveryPaymentSummary = buildCustomerPaymentSummary(awaitingDeliverySummary, []);
+assert.equal(awaitingDeliveryPaymentSummary.hasOutstandingBalance, true);
+assert.equal(awaitingDeliveryPaymentSummary.hasDeliveredOutstandingBalance, false);
+assert.equal(getPaymentFollowUps([awaitingDeliverySummary], []).length, 0);
 const paymentPatch = buildPackageTaskPaymentPatch(
   packageTasks[0],
   { currency: "LYD", amount: "15.25" },
@@ -154,6 +167,14 @@ const deliveredSummary = getOrderSummary(
   []
 );
 assert.equal(deliveredSummary.status, "Delivered");
+const packedShipmentSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [{ id: "shipment-packed", orderIds: ["order-1"], status: "Delivered" }],
+  [],
+  [{ id: "task-packed", orderId: "order-1", status: "ready" }]
+);
+assert.equal(packedShipmentSummary.status, "Shipped");
 
 const totalsText = formatCurrencyTotals(summary.currencyTotals);
 assert.equal(totalsText, "LYD 100.00 + USD 25.00 + CAD 10.00");

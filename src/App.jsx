@@ -221,7 +221,7 @@ function useBellaData() {
   };
 }
 
-function StatusIndicator({ status, errors, loadedCollections, pendingCollections }) {
+function StatusIndicator({ status, errors, loadedCollections, pendingCollections, collectionCounts = [] }) {
   const labels = {
     connected: "Connected",
     syncing: "Syncing/loading",
@@ -248,6 +248,16 @@ function StatusIndicator({ status, errors, loadedCollections, pendingCollections
         <small>{pendingCollections.slice(0, 2).join(", ")}</small>
       ) : null}
       {errors.length > 0 ? <small>{getErrorMessage(errors[0].error)}</small> : null}
+      <details className="status-details">
+        <summary>Collections</summary>
+        <div className="status-collection-list" aria-label="Loaded collection counts">
+          {collectionCounts.map((entry) => (
+            <span key={entry.collectionName}>
+              {entry.collectionName}: <strong>{entry.count}</strong>
+            </span>
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
@@ -633,13 +643,20 @@ function PaymentRecordForm({ packageTasks, values, setValues, saving, onSave, on
     </form>
   );
 }
-function PaymentFollowUpsPanel({ paymentSummaries, selectedCustomerKey, onSelect }) {
+function PaymentFollowUpsPanel({ paymentSummaries, selectedCustomerKey, isProfileOpen, onSelect }) {
+  const [isOpen, setIsOpen] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return window.localStorage.getItem("bella.paymentFollowUpsOpen") === "true";
+  });
   const visibleFollowUps = paymentSummaries
-    .filter((paymentSummary) => paymentSummary.hasOutstandingBalance)
+    .filter((paymentSummary) => paymentSummary.hasDeliveredOutstandingBalance)
     .sort((leftSummary, rightSummary) => {
       const statusOrder = { unpaid: 0, partial: 1, overpaid: 2, paid: 3, "no-balance": 4 };
-      const leftStatus = statusOrder[leftSummary.status] ?? 9;
-      const rightStatus = statusOrder[rightSummary.status] ?? 9;
+      const leftStatus = statusOrder[leftSummary.deliveredStatus] ?? 9;
+      const rightStatus = statusOrder[rightSummary.deliveredStatus] ?? 9;
 
       if (leftStatus !== rightStatus) {
         return leftStatus - rightStatus;
@@ -650,65 +667,92 @@ function PaymentFollowUpsPanel({ paymentSummaries, selectedCustomerKey, onSelect
       });
     });
   const remainingTotals = combineCurrencyTotals(
-    visibleFollowUps.map((paymentSummary) => paymentSummary.remainingTotals)
+    visibleFollowUps.map((paymentSummary) => paymentSummary.deliveredRemainingTotals)
   );
+  const totalsLabel = remainingTotals.length
+    ? formatCurrencyTotals(remainingTotals)
+    : "No delivered balances";
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("bella.paymentFollowUpsOpen", isOpen ? "true" : "false");
+    }
+  }, [isOpen]);
+
+  if (isProfileOpen) {
+    return null;
+  }
 
   return (
-    <section className="payment-panel" aria-label="Payment follow-ups">
+    <section className={`payment-panel${isOpen ? "" : " collapsed"}`} aria-label="Payment follow-ups">
       <div className="section-title-row compact">
         <div>
           <p className="eyebrow">Payment follow-ups</p>
-          <h2>Customers with remaining balance</h2>
+          <h2>Delivered customers with remaining balance</h2>
         </div>
         <div className="payment-panel-summary">
           <span className="count-badge">{visibleFollowUps.length} customers</span>
-          <span className="count-badge">{formatCurrencyTotals(remainingTotals)}</span>
+          <span className="count-badge">{totalsLabel}</span>
+          <button
+            className="button secondary payment-panel-toggle"
+            type="button"
+            aria-expanded={isOpen}
+            aria-controls="payment-follow-ups-body"
+            onClick={() => setIsOpen((currentValue) => !currentValue)}
+          >
+            <ChevronDown className={isOpen ? "" : "collapsed-icon"} size={16} aria-hidden="true" />
+            {isOpen ? "Collapse" : "Expand"}
+          </button>
         </div>
       </div>
 
-      {visibleFollowUps.length === 0 ? (
-        <div className="empty-state inline payment-empty">
-          <ReceiptText size={22} aria-hidden="true" />
-          <h3>No unpaid customers found</h3>
-          <p>All linked delivery payments cover the current customer order totals.</p>
+      {isOpen ? (
+        <div id="payment-follow-ups-body" className="payment-follow-ups-body">
+          {visibleFollowUps.length === 0 ? (
+            <div className="empty-state inline payment-empty">
+              <ReceiptText size={22} aria-hidden="true" />
+              <h3>No delivered unpaid customers</h3>
+              <p>Customers waiting for delivery are hidden until the package is delivered.</p>
+            </div>
+          ) : (
+            <div className="payment-follow-up-list">
+              {visibleFollowUps.map((paymentSummary) => (
+                <button
+                  className={`payment-follow-up-row payment-${paymentSummary.deliveredStatus}${
+                    selectedCustomerKey === paymentSummary.customerKey ? " selected" : ""
+                  }`}
+                  type="button"
+                  key={paymentSummary.customerKey}
+                  onClick={() => onSelect(paymentSummary.summary)}
+                >
+                  <div className="payment-row-main">
+                    <div>
+                      <strong>{paymentSummary.customerName}</strong>
+                      <p>{paymentSummary.customerPhone || "No phone on record"}</p>
+                    </div>
+                    <span className={`badge payment-badge payment-${paymentSummary.deliveredStatus}`}>
+                      {paymentSummary.deliveredStatusLabel}
+                    </span>
+                  </div>
+                  <div className="payment-row-grid">
+                    <PaymentTotals label="Delivered owed" totals={paymentSummary.deliveredOwedTotals} emptyLabel="No balance" />
+                    <PaymentTotals label="Delivered paid" totals={paymentSummary.deliveredPaidTotals} />
+                    <PaymentTotals label="Remaining" totals={paymentSummary.deliveredRemainingTotals} emptyLabel="No remaining balance" />
+                    <div>
+                      <span>Last update</span>
+                      <strong>
+                        {paymentSummary.deliveredLastPaymentAt
+                          ? formatDisplayDate(paymentSummary.deliveredLastPaymentAt, "Not recorded", { includeTime: true })
+                          : "Not recorded"}
+                      </strong>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="payment-follow-up-list">
-          {visibleFollowUps.map((paymentSummary) => (
-            <button
-              className={`payment-follow-up-row payment-${paymentSummary.status}${
-                selectedCustomerKey === paymentSummary.customerKey ? " selected" : ""
-              }`}
-              type="button"
-              key={paymentSummary.customerKey}
-              onClick={() => onSelect(paymentSummary.summary)}
-            >
-              <div className="payment-row-main">
-                <div>
-                  <strong>{paymentSummary.customerName}</strong>
-                  <p>{paymentSummary.customerPhone || "No phone on record"}</p>
-                </div>
-                <span className={`badge payment-badge payment-${paymentSummary.status}`}>
-                  {paymentSummary.statusLabel}
-                </span>
-              </div>
-              <div className="payment-row-grid">
-                <PaymentTotals label="Owed" totals={paymentSummary.owedTotals} emptyLabel="No balance" />
-                <PaymentTotals label="Paid" totals={paymentSummary.paidTotals} />
-                <PaymentTotals label="Remaining" totals={paymentSummary.remainingTotals} emptyLabel="No remaining balance" />
-                <div>
-                  <span>Last update</span>
-                  <strong>
-                    {paymentSummary.lastPaymentAt
-                      ? formatDisplayDate(paymentSummary.lastPaymentAt, "Not recorded", { includeTime: true })
-                      : "Not recorded"}
-                  </strong>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -2002,29 +2046,23 @@ function App() {
         <div>
           <p className="eyebrow">Bella Boutique</p>
           <h1>Customer Orders</h1>
-          <p>Read-only customer, order, item, and receipt viewer.</p>
+          <p>Customer, order, receipt, and delivery payment workspace.</p>
         </div>
         <StatusIndicator
           status={status}
           errors={errors}
           loadedCollections={loadedCollections}
           pendingCollections={pendingCollections}
+          collectionCounts={collectionCounts}
         />
       </header>
 
       <ErrorBanner errors={errors} />
 
-      <section className="collection-strip" aria-label="Loaded collection counts">
-        {collectionCounts.map((entry) => (
-          <span key={entry.collectionName}>
-            {entry.collectionName}: <strong>{entry.count}</strong>
-          </span>
-        ))}
-      </section>
-
       <PaymentFollowUpsPanel
         paymentSummaries={paymentSummaries}
         selectedCustomerKey={selectedCustomerKey}
+        isProfileOpen={Boolean(selectedSummary)}
         onSelect={(summary) => {
           setSelectedCustomerKey(summary.key);
           scrollToProfileOnPhone();

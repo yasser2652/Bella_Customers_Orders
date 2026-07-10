@@ -199,14 +199,9 @@ function logMatchesTask(log = {}, task = {}) {
   );
 }
 
-function logMatchesSummary(log = {}, summary = {}) {
-  const customerValues = identityValues(summary.customer);
-  const orderValues = (summary.orders || []).flatMap((order) => identityValues(order));
-  const orderReferences = (summary.orders || []).map(getOrderReference).filter(Boolean);
-
-  if (valuesOverlap(identityValuesFromFields(log, CUSTOMER_RELATION_FIELDS), customerValues)) {
-    return true;
-  }
+function logMatchesOrderOrTask(log = {}, orders = [], tasks = []) {
+  const orderValues = (Array.isArray(orders) ? orders : []).flatMap((order) => identityValues(order));
+  const orderReferences = (Array.isArray(orders) ? orders : []).map(getOrderReference).filter(Boolean);
 
   if (valuesOverlap(identityValuesFromFields(log, ORDER_RELATION_FIELDS), orderValues)) {
     return true;
@@ -221,7 +216,17 @@ function logMatchesSummary(log = {}, summary = {}) {
     return true;
   }
 
-  return (summary.packageTasks || []).some((task) => logMatchesTask(log, task));
+  return (Array.isArray(tasks) ? tasks : []).some((task) => logMatchesTask(log, task));
+}
+
+function logMatchesSummary(log = {}, summary = {}) {
+  const customerValues = identityValues(summary.customer);
+
+  if (valuesOverlap(identityValuesFromFields(log, CUSTOMER_RELATION_FIELDS), customerValues)) {
+    return true;
+  }
+
+  return logMatchesOrderOrTask(log, summary.orders, summary.packageTasks);
 }
 
 function selectLatestSourcesByGroup(sources = []) {
@@ -238,8 +243,16 @@ function selectLatestSourcesByGroup(sources = []) {
   return [...latestByGroup.values()];
 }
 
-function buildPaymentSources(summary = {}, packageScanLogs = []) {
-  const tasks = Array.isArray(summary.packageTasks) ? summary.packageTasks : [];
+function buildPaymentSources(summary = {}, packageScanLogs = [], scope = {}) {
+  const tasks = Array.isArray(scope.packageTasks)
+    ? scope.packageTasks
+    : Array.isArray(summary.packageTasks)
+      ? summary.packageTasks
+      : [];
+  const orders = Array.isArray(scope.orders) ? scope.orders : summary.orders;
+  const matchLog = scope.requireOrderOrTaskMatch
+    ? (log) => logMatchesOrderOrTask(log, orders, tasks)
+    : (log) => logMatchesSummary(log, summary);
   const taskSources = tasks
     .map((task, index) => ({
       type: "packageTask",
@@ -253,7 +266,7 @@ function buildPaymentSources(summary = {}, packageScanLogs = []) {
   );
   const logSources = (Array.isArray(packageScanLogs) ? packageScanLogs : [])
     .filter((log) => hasCurrencyTotals(getPaymentTotals(log)))
-    .filter((log) => logMatchesSummary(log, summary))
+    .filter(matchLog)
     .map((log, index) => {
       const matchingTaskIndex = tasks.findIndex((task) => logMatchesTask(log, task));
       const groupKey =
@@ -288,6 +301,48 @@ function buildPaymentSources(summary = {}, packageScanLogs = []) {
   return [...taskSources, ...selectLatestSourcesByGroup(logSources)];
 }
 
+function getPaymentStatus({ owedTotals = [], paidTotals = [], remainingTotals = [], overpaidTotals = [] } = {}) {
+  const hasOwedBalance = hasCurrencyTotals(owedTotals);
+  const hasRecordedPayment = hasCurrencyTotals(paidTotals);
+  const hasOutstandingBalance = hasCurrencyTotals(remainingTotals);
+
+  if (hasOwedBalance && hasOutstandingBalance && hasRecordedPayment) {
+    return "partial";
+  }
+
+  if (hasOwedBalance && hasOutstandingBalance) {
+    return "unpaid";
+  }
+
+  if (hasOwedBalance && hasCurrencyTotals(overpaidTotals)) {
+    return "overpaid";
+  }
+
+  if (hasOwedBalance) {
+    return "paid";
+  }
+
+  return "no-balance";
+}
+
+function getDeliveredPaymentScope(summary = {}) {
+  const orders = Array.isArray(summary.orders) ? summary.orders : [];
+  const deliveredEntries = (Array.isArray(summary.orderSummaries) ? summary.orderSummaries : [])
+    .map((orderSummary, index) => ({
+      order: orders[index],
+      orderSummary
+    }))
+    .filter(({ orderSummary }) => orderSummary?.status === "Delivered");
+
+  return {
+    orders: deliveredEntries.map(({ order }) => order).filter(Boolean),
+    orderSummaries: deliveredEntries.map(({ orderSummary }) => orderSummary).filter(Boolean),
+    packageTasks: deliveredEntries.flatMap(({ orderSummary }) =>
+      Array.isArray(orderSummary?.packageTasks) ? orderSummary.packageTasks : []
+    )
+  };
+}
+
 export function buildCustomerPaymentSummary(summary = {}, packageScanLogs = []) {
   const owedTotals = Array.isArray(summary.currencyTotals) ? summary.currencyTotals : [];
   const sources = buildPaymentSources(summary, packageScanLogs);
@@ -297,17 +352,36 @@ export function buildCustomerPaymentSummary(summary = {}, packageScanLogs = []) 
   const hasOwedBalance = hasCurrencyTotals(owedTotals);
   const hasRecordedPayment = hasCurrencyTotals(paidTotals);
   const hasOutstandingBalance = hasCurrencyTotals(remainingTotals);
-  let status = "no-balance";
-
-  if (hasOwedBalance && hasOutstandingBalance && hasRecordedPayment) {
-    status = "partial";
-  } else if (hasOwedBalance && hasOutstandingBalance) {
-    status = "unpaid";
-  } else if (hasOwedBalance && hasCurrencyTotals(overpaidTotals)) {
-    status = "overpaid";
-  } else if (hasOwedBalance) {
-    status = "paid";
-  }
+  const status = getPaymentStatus({ owedTotals, paidTotals, remainingTotals, overpaidTotals });
+  const deliveredScope = getDeliveredPaymentScope(summary);
+  const deliveredOwedTotals = combineCurrencyTotals(
+    deliveredScope.orderSummaries.map((orderSummary) => orderSummary.currencyTotals)
+  );
+  const deliveredSources = buildPaymentSources(summary, packageScanLogs, {
+    orders: deliveredScope.orders,
+    packageTasks: deliveredScope.packageTasks,
+    requireOrderOrTaskMatch: true
+  });
+  const deliveredPaidTotals = combineCurrencyTotals(
+    deliveredSources.map((source) => source.currencyTotals)
+  );
+  const deliveredRemainingTotals = subtractCurrencyTotals(
+    deliveredOwedTotals,
+    deliveredPaidTotals
+  );
+  const deliveredOverpaidTotals = subtractCurrencyTotals(
+    deliveredPaidTotals,
+    deliveredOwedTotals
+  );
+  const hasDeliveredOwedBalance = hasCurrencyTotals(deliveredOwedTotals);
+  const hasDeliveredRecordedPayment = hasCurrencyTotals(deliveredPaidTotals);
+  const hasDeliveredOutstandingBalance = hasCurrencyTotals(deliveredRemainingTotals);
+  const deliveredStatus = getPaymentStatus({
+    owedTotals: deliveredOwedTotals,
+    paidTotals: deliveredPaidTotals,
+    remainingTotals: deliveredRemainingTotals,
+    overpaidTotals: deliveredOverpaidTotals
+  });
 
   const statusLabels = {
     "no-balance": "No order balance",
@@ -332,21 +406,35 @@ export function buildCustomerPaymentSummary(summary = {}, packageScanLogs = []) 
     hasOutstandingBalance,
     status,
     statusLabel: statusLabels[status] || status,
+    deliveredOrderCount: deliveredScope.orderSummaries.length,
+    deliveredOwedTotals,
+    deliveredPaidTotals,
+    deliveredRemainingTotals,
+    deliveredOverpaidTotals,
+    hasDeliveredOwedBalance,
+    hasDeliveredRecordedPayment,
+    hasDeliveredOutstandingBalance,
+    deliveredStatus,
+    deliveredStatusLabel: statusLabels[deliveredStatus] || deliveredStatus,
     paymentSourceCount: sources.length,
     packageTaskPaymentCount: sources.filter((source) => source.type === "packageTask").length,
     scanLogPaymentCount: sources.filter((source) => source.type === "packageScanLog").length,
-    lastPaymentAt: latestDateValue(sources.map((source) => getPaymentDate(source.record)))
+    deliveredPaymentSourceCount: deliveredSources.length,
+    lastPaymentAt: latestDateValue(sources.map((source) => getPaymentDate(source.record))),
+    deliveredLastPaymentAt: latestDateValue(
+      deliveredSources.map((source) => getPaymentDate(source.record))
+    )
   };
 }
 
 export function getPaymentFollowUps(summaries = [], packageScanLogs = []) {
   return (Array.isArray(summaries) ? summaries : [])
     .map((summary) => buildCustomerPaymentSummary(summary, packageScanLogs))
-    .filter((paymentSummary) => paymentSummary.hasOutstandingBalance)
+    .filter((paymentSummary) => paymentSummary.hasDeliveredOutstandingBalance)
     .sort((leftSummary, rightSummary) => {
       const statusOrder = { unpaid: 0, partial: 1, overpaid: 2, paid: 3, "no-balance": 4 };
-      const leftStatus = statusOrder[leftSummary.status] ?? 9;
-      const rightStatus = statusOrder[rightSummary.status] ?? 9;
+      const leftStatus = statusOrder[leftSummary.deliveredStatus] ?? 9;
+      const rightStatus = statusOrder[rightSummary.deliveredStatus] ?? 9;
 
       if (leftStatus !== rightStatus) {
         return leftStatus - rightStatus;

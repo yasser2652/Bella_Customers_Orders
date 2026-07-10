@@ -614,7 +614,52 @@ export function isPendingRequestedItem(requestedItem = {}) {
   );
 }
 
-export function getOrderStatus(order = {}, shipments = [], deliveries = []) {
+function normalizeStatusToken(value) {
+  return normalizeSearchText(value).replace(/[_\s-]+/g, "");
+}
+
+export function normalizePackageTaskStatus(task = {}) {
+  const token = normalizeStatusToken(firstText(task.status, task.packageStatus));
+
+  if (["handedover", "handover", "delivered", "complete", "completed"].includes(token)) {
+    return "handedOver";
+  }
+
+  if (["packed", "ready", "readyforpickup", "readyfordelivery"].includes(token)) {
+    return "packed";
+  }
+
+  if (["partiallypacked", "partial", "inprogress", "packing"].includes(token)) {
+    return "partiallyPacked";
+  }
+
+  const quantityNeeded = Math.max(0, Number(task.quantityNeeded) || 0);
+  const quantityPacked = Math.max(0, Number(task.quantityPacked) || 0);
+
+  if (quantityNeeded > 0 && quantityPacked >= quantityNeeded) {
+    return "packed";
+  }
+
+  if (quantityPacked > 0) {
+    return "partiallyPacked";
+  }
+
+  return "pending";
+}
+
+export function isPackageTaskDelivered(task = {}) {
+  return normalizePackageTaskStatus(task) === "handedOver";
+}
+
+function recordHasDeliveredStatus(record = {}, ...fields) {
+  return fields.some((field) => {
+    const token = normalizeStatusToken(record?.[field]);
+
+    return ["delivered", "complete", "completed", "handedover", "handover"].includes(token);
+  });
+}
+
+export function getOrderStatus(order = {}, shipments = [], deliveries = [], packageTasks = []) {
   const explicitStatus = firstText(order.status);
   const explicitStatusText = normalizeSearchText(explicitStatus);
 
@@ -632,12 +677,32 @@ export function getOrderStatus(order = {}, shipments = [], deliveries = []) {
 
   const shipment = getOrderShipment(order, shipments);
   const delivery = getOrderDelivery(order, deliveries, shipments);
+  const orderPackageTasks = getOrderPackageTasks(order, packageTasks);
+  const packageStatuses = orderPackageTasks.map(normalizePackageTaskStatus);
+  const hasPackageTasks = packageStatuses.length > 0;
+  const allPackagesDelivered =
+    hasPackageTasks && packageStatuses.every((status) => status === "handedOver");
+  const anyPackageStarted =
+    hasPackageTasks && packageStatuses.some((status) => status !== "pending");
+  const allPackagesPacked =
+    hasPackageTasks && packageStatuses.every((status) => ["packed", "handedOver"].includes(status));
   const shipmentStatus = firstText(shipment?.status, order.shipmentStatus);
   const deliveryStatus = firstText(delivery?.status, order.deliveryStatus);
-  const statusText = normalizeSearchText(`${shipmentStatus} ${deliveryStatus}`);
 
-  if (statusText.includes("delivered") || statusText.includes("completed")) {
+  if (
+    allPackagesDelivered ||
+    recordHasDeliveredStatus(delivery, "status", "deliveryStatus") ||
+    recordHasDeliveredStatus(order, "deliveryStatus")
+  ) {
     return "Delivered";
+  }
+
+  if (!hasPackageTasks && recordHasDeliveredStatus(shipment, "status", "shipmentStatus")) {
+    return "Delivered";
+  }
+
+  if (allPackagesPacked || anyPackageStarted) {
+    return "Shipped";
   }
 
   if (
@@ -648,7 +713,11 @@ export function getOrderStatus(order = {}, shipments = [], deliveries = []) {
     order.shipmentTrackingNumber ||
     order.closedAt
   ) {
-    return shipmentStatus || deliveryStatus || "Shipped";
+    const transportStatus = shipmentStatus || deliveryStatus;
+
+    return transportStatus && normalizeSearchText(transportStatus).includes("delivered")
+      ? "Shipped"
+      : transportStatus || "Shipped";
   }
 
   return explicitStatus || "Open";
@@ -682,7 +751,7 @@ export function getOrderSummary(
     shipment,
     delivery,
     packageTasks: tasks,
-    status: getOrderStatus(order, shipments, deliveries)
+    status: getOrderStatus(order, shipments, deliveries, packageTasks)
   };
 }
 
