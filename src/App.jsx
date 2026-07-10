@@ -31,6 +31,7 @@ import {
 } from "./services/firestoreRead.js";
 import {
   addPackageTaskPayment,
+  correctPackageTaskPayment,
   getCustomerEditableValues,
   updateCustomerInfo
 } from "./services/firestoreWrite.js";
@@ -480,6 +481,16 @@ function getPackageTaskOptionLabel(packageTask = {}, index = 0) {
   );
 }
 
+function formatPaymentInputAmount(amount) {
+  const numericAmount = Number(amount);
+
+  if (!Number.isFinite(numericAmount)) {
+    return "0";
+  }
+
+  return String(Math.round((numericAmount + Number.EPSILON) * 100) / 100);
+}
+
 function getDefaultPaymentForm(summary = {}, paymentSummary = {}) {
   const firstTask = summary.packageTasks?.[0] || null;
 
@@ -487,6 +498,17 @@ function getDefaultPaymentForm(summary = {}, paymentSummary = {}) {
     packageTaskKey: firstTask ? getRecordKey(firstTask, "package-task-0") : "",
     currency: getDefaultPaymentCurrency(paymentSummary),
     amount: ""
+  };
+}
+
+function getDefaultPaymentCorrectionForm(summary = {}, paymentSummary = {}) {
+  const firstTask = summary.packageTasks?.[0] || null;
+  const currency = getDefaultPaymentCurrency(paymentSummary);
+
+  return {
+    packageTaskKey: firstTask ? getRecordKey(firstTask, "package-task-0") : "",
+    currency,
+    amount: formatPaymentInputAmount(firstTask ? getPackageTaskPaymentAmount(firstTask, currency) : 0)
   };
 }
 function PaymentTotals({ label, totals, emptyLabel = "Not recorded" }) {
@@ -498,7 +520,7 @@ function PaymentTotals({ label, totals, emptyLabel = "Not recorded" }) {
   );
 }
 
-function CustomerPaymentStatusCard({ paymentSummary, canRecordPayment, onRecordPayment }) {
+function CustomerPaymentStatusCard({ paymentSummary, canRecordPayment, canCorrectPayment, onRecordPayment, onCorrectPayment }) {
   return (
     <section className={`customer-payment-card payment-${paymentSummary.status}`}>
       <div className="section-title-row compact">
@@ -518,6 +540,15 @@ function CustomerPaymentStatusCard({ paymentSummary, canRecordPayment, onRecordP
           >
             <Save size={16} aria-hidden="true" />
             Record payment
+          </button>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={!canCorrectPayment}
+            onClick={onCorrectPayment}
+          >
+            <Pencil size={16} aria-hidden="true" />
+            Correct payment
           </button>
         </div>
       </div>
@@ -638,6 +669,118 @@ function PaymentRecordForm({ packageTasks, values, setValues, saving, onSave, on
         <button className="button" type="submit" disabled={saving || !canSave}>
           <Save size={16} aria-hidden="true" />
           {saving ? "Saving..." : "Add payment"}
+        </button>
+      </div>
+    </form>
+  );
+}
+function PaymentCorrectionForm({ packageTasks, values, setValues, saving, onSave, onCancel }) {
+  const selectedTask =
+    packageTasks.find(
+      (task, index) => getRecordKey(task, `package-task-${index}`) === values.packageTaskKey
+    ) || packageTasks[0];
+  const existingAmount = selectedTask
+    ? getPackageTaskPaymentAmount(selectedTask, values.currency)
+    : 0;
+  const correctedAmount = Number(values.amount);
+  const changed =
+    Number.isFinite(correctedAmount) &&
+    Math.abs(correctedAmount - existingAmount) > 0.009;
+  const canSave = Boolean(selectedTask) && Number.isFinite(correctedAmount) && correctedAmount >= 0 && changed;
+  const updateValuesForSelection = (packageTaskKey, currency) => {
+    const task =
+      packageTasks.find(
+        (candidateTask, index) => getRecordKey(candidateTask, `package-task-${index}`) === packageTaskKey
+      ) || packageTasks[0];
+
+    return {
+      packageTaskKey,
+      currency,
+      amount: formatPaymentInputAmount(task ? getPackageTaskPaymentAmount(task, currency) : 0)
+    };
+  };
+
+  return (
+    <form className="payment-record-form payment-correction-form" onSubmit={onSave}>
+      <div className="section-title-row compact">
+        <div>
+          <p className="eyebrow">Correct payment</p>
+          <h3>Replace recorded payment total</h3>
+        </div>
+      </div>
+      <div className="edit-grid">
+        <label className="field">
+          <span>Package task</span>
+          <select
+            className="input"
+            value={values.packageTaskKey}
+            onChange={(event) =>
+              setValues((currentValues) =>
+                updateValuesForSelection(event.target.value, currentValues.currency)
+              )
+            }
+          >
+            {packageTasks.map((task, index) => {
+              const key = getRecordKey(task, `package-task-${index}`);
+
+              return (
+                <option value={key} key={key}>
+                  {getPackageTaskOptionLabel(task, index)}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        <label className="field">
+          <span>Currency</span>
+          <select
+            className="input"
+            value={values.currency}
+            onChange={(event) =>
+              setValues((currentValues) =>
+                updateValuesForSelection(currentValues.packageTaskKey, event.target.value)
+              )
+            }
+          >
+            {PAYMENT_ENTRY_CURRENCIES.map((currency) => (
+              <option value={currency} key={currency}>
+                {currency}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field wide">
+          <span>Correct recorded total</span>
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={values.amount}
+            onChange={(event) =>
+              setValues((currentValues) => ({
+                ...currentValues,
+                amount: event.target.value
+              }))
+            }
+            placeholder="0.00"
+          />
+        </label>
+      </div>
+      <p className="helper-text warning-text compact-warning">
+        Existing {values.currency} payment is {formatCurrency(existingAmount, values.currency)}.
+        Saving will replace it with {Number.isFinite(correctedAmount) && correctedAmount >= 0
+          ? formatCurrency(correctedAmount, values.currency)
+          : "an invalid amount"}.
+      </p>
+      <div className="form-actions">
+        <button className="button secondary" type="button" disabled={saving} onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="button" type="submit" disabled={saving || !canSave}>
+          <Save size={16} aria-hidden="true" />
+          {saving ? "Saving..." : "Save correction"}
         </button>
       </div>
     </form>
@@ -1601,16 +1744,29 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
     () => getDefaultPaymentForm(summary, paymentSummary),
     [paymentSummary, summary]
   );
+  const defaultPaymentCorrectionForm = useMemo(
+    () => getDefaultPaymentCorrectionForm(summary, paymentSummary),
+    [paymentSummary, summary]
+  );
   const [recordingPayment, setRecordingPayment] = useState(false);
+  const [correctingPayment, setCorrectingPayment] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [savingPaymentCorrection, setSavingPaymentCorrection] = useState(false);
   const [paymentForm, setPaymentForm] = useState(() => defaultPaymentForm);
+  const [paymentCorrectionForm, setPaymentCorrectionForm] = useState(
+    () => defaultPaymentCorrectionForm
+  );
   const canRecordPayment = paymentSummary.hasOutstandingBalance && summary.packageTasks.length > 0;
+  const canCorrectPayment = summary.packageTasks.length > 0;
 
   useEffect(() => {
     setRecordingPayment(false);
+    setCorrectingPayment(false);
     setSavingPayment(false);
+    setSavingPaymentCorrection(false);
     setPaymentForm(defaultPaymentForm);
-  }, [defaultPaymentForm]);
+    setPaymentCorrectionForm(defaultPaymentCorrectionForm);
+  }, [defaultPaymentCorrectionForm, defaultPaymentForm]);
 
   const toggleOrder = (order) => {
     const orderKey = getRecordKey(order, getOrderReference(order));
@@ -1687,6 +1843,38 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
   const handleCancelPayment = () => {
     setPaymentForm(defaultPaymentForm);
     setRecordingPayment(false);
+  };
+  const handleSavePaymentCorrection = async (event) => {
+    event.preventDefault();
+
+    const selectedTask = summary.packageTasks.find(
+      (task, index) => getRecordKey(task, `package-task-${index}`) === paymentCorrectionForm.packageTaskKey
+    );
+
+    if (!selectedTask) {
+      setNotice({ tone: "warning", message: "Select a package task before saving payment correction." });
+      return;
+    }
+
+    setSavingPaymentCorrection(true);
+
+    try {
+      await correctPackageTaskPayment(selectedTask, paymentCorrectionForm);
+      setCorrectingPayment(false);
+      setPaymentCorrectionForm(defaultPaymentCorrectionForm);
+      setNotice({ message: "Payment correction saved." });
+    } catch (error) {
+      setNotice({
+        tone: "warning",
+        message: getErrorMessage(error) || "Payment correction failed."
+      });
+    } finally {
+      setSavingPaymentCorrection(false);
+    }
+  };
+  const handleCancelPaymentCorrection = () => {
+    setPaymentCorrectionForm(defaultPaymentCorrectionForm);
+    setCorrectingPayment(false);
   };
 
   return (
@@ -1794,9 +1982,16 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
       <CustomerPaymentStatusCard
         paymentSummary={paymentSummary}
         canRecordPayment={canRecordPayment}
+        canCorrectPayment={canCorrectPayment}
         onRecordPayment={() => {
           setPaymentForm(defaultPaymentForm);
+          setCorrectingPayment(false);
           setRecordingPayment(true);
+        }}
+        onCorrectPayment={() => {
+          setPaymentCorrectionForm(defaultPaymentCorrectionForm);
+          setRecordingPayment(false);
+          setCorrectingPayment(true);
         }}
       />
 
@@ -1808,6 +2003,17 @@ function CustomerProfile({ summary, data, onClose, onBackToSearch, panelRef, set
           saving={savingPayment}
           onSave={handleSavePayment}
           onCancel={handleCancelPayment}
+        />
+      ) : null}
+
+      {correctingPayment ? (
+        <PaymentCorrectionForm
+          packageTasks={summary.packageTasks}
+          values={paymentCorrectionForm}
+          setValues={setPaymentCorrectionForm}
+          saving={savingPaymentCorrection}
+          onSave={handleSavePaymentCorrection}
+          onCancel={handleCancelPaymentCorrection}
         />
       ) : null}
 

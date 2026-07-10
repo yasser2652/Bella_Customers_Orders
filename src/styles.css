@@ -750,6 +750,15 @@ p {
   color: var(--muted);
   font-weight: 650;
 }
+
+.payment-correction-form {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.payment-correction-form .compact-warning {
+  margin: 0;
+}
 .payment-source-line span {
   padding: 5px 8px;
   border-radius: 999px;

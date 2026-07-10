@@ -95,6 +95,16 @@ function normalizePositivePaymentAmount(amount) {
   return roundCurrencyAmount(numericAmount);
 }
 
+function normalizeNonNegativePaymentAmount(amount) {
+  const numericAmount = Number(amount);
+
+  if (!Number.isFinite(numericAmount) || numericAmount < 0) {
+    throw new Error("Corrected payment amount must be 0 or greater.");
+  }
+
+  return roundCurrencyAmount(numericAmount);
+}
+
 function toLocalDateTimeValue(date = new Date()) {
   const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
 
@@ -116,6 +126,18 @@ export function buildPackageTaskPaymentPatch(packageTask = {}, values = {}, now 
   };
 }
 
+export function buildPackageTaskPaymentCorrectionPatch(packageTask = {}, values = {}, now = new Date()) {
+  const currency = normalizePaymentCurrency(values.currency);
+  const correctedAmount = normalizeNonNegativePaymentAmount(values.amount);
+  const field = PAYMENT_FIELD_BY_CURRENCY[currency];
+
+  return {
+    [field]: correctedAmount,
+    deliveryPaymentUpdatedAt: now.toISOString(),
+    deliveryPaymentUpdatedAtLocal: toLocalDateTimeValue(now)
+  };
+}
+
 export async function addPackageTaskPayment(packageTask = {}, values = {}) {
   const documentId = getPackageTaskDocumentId(packageTask);
 
@@ -127,5 +149,18 @@ export async function addPackageTaskPayment(packageTask = {}, values = {}) {
   await updateDoc(
     doc(getFirestoreDb(), "packageTasks", documentId),
     buildPackageTaskPaymentPatch(packageTask, values)
+  );
+}
+export async function correctPackageTaskPayment(packageTask = {}, values = {}) {
+  const documentId = getPackageTaskDocumentId(packageTask);
+
+  if (!documentId) {
+    throw new Error("Cannot update this package task because the Firestore document id is missing.");
+  }
+
+  await ensureAnonymousFirebaseUser();
+  await updateDoc(
+    doc(getFirestoreDb(), "packageTasks", documentId),
+    buildPackageTaskPaymentCorrectionPatch(packageTask, values)
   );
 }

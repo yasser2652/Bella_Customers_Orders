@@ -9,6 +9,7 @@ import {
 } from "../src/utils/relationships.js";
 import {
   buildPackageTaskPaymentPatch,
+  buildPackageTaskPaymentCorrectionPatch,
   buildCustomerUpdatePatch,
   getCustomerEditableValues
 } from "../src/services/firestoreWrite.js";
@@ -155,6 +156,19 @@ const paymentPatch = buildPackageTaskPaymentPatch(
 assert.equal(paymentPatch.deliveryPaymentLyd.isEqual(increment(15.25)), true);
 assert.equal(paymentPatch.deliveryPaymentUpdatedAt, "2026-01-14T12:00:00.000Z");
 assert.match(paymentPatch.deliveryPaymentUpdatedAtLocal, /^2026-01-14T/);
+const correctionPatch = buildPackageTaskPaymentCorrectionPatch(
+  packageTasks[0],
+  { currency: "LYD", amount: "35.10" },
+  new Date("2026-01-14T13:00:00.000Z")
+);
+assert.equal(correctionPatch.deliveryPaymentLyd, 35.1);
+assert.equal(correctionPatch.deliveryPaymentUpdatedAt, "2026-01-14T13:00:00.000Z");
+const zeroCorrectionPatch = buildPackageTaskPaymentCorrectionPatch(
+  packageTasks[0],
+  { currency: "USD", amount: "0" },
+  new Date("2026-01-14T14:00:00.000Z")
+);
+assert.equal(zeroCorrectionPatch.deliveryPaymentUsd, 0);
 
 const firstOrderPurchases = getOrderPurchases(orders[0], purchases);
 assert.equal(firstOrderPurchases.length, 2);
