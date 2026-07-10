@@ -541,47 +541,97 @@ export function getCustomerDeliveries(customer, deliveries = [], orders = [], sh
   });
 }
 
+function flattenFieldValues(record = {}, fields = []) {
+  return fields.flatMap((field) => {
+    const value = record?.[field];
+
+    return Array.isArray(value) ? value : [value];
+  });
+}
+
+function normalizedTextValues(values = []) {
+  return uniqueIdentityValues(values).map(normalizeSearchText).filter(Boolean);
+}
+
+function textValuesOverlap(leftValues = [], rightValues = []) {
+  const rightSet = new Set(normalizedTextValues(rightValues));
+
+  return normalizedTextValues(leftValues).some((value) => rightSet.has(value));
+}
+
+function getOrderReferenceValues(order = {}) {
+  return uniqueIdentityValues([
+    getOrderReference(order),
+    order.reference,
+    order.orderReference,
+    order.orderRef,
+    order.orderNumber,
+    order.number
+  ]);
+}
+
+function getPackageTaskOrderReferenceValues(task = {}) {
+  return uniqueIdentityValues([
+    task.orderReference,
+    task.orderRef,
+    task.orderNumber,
+    task.reference,
+    ...flattenFieldValues(task, ["orderReferences"])
+  ]);
+}
+
 export function getOrderPackageTasks(order, packageTasks = []) {
-  const orderValues = identityValues(order);
-  const orderReference = normalizeSearchText(getOrderReference(order));
+  const orderValues = uniqueIdentityValues([
+    ...identityValues(order),
+    order.id,
+    order.localId,
+    order.androidLocalId,
+    order.firestoreId,
+    order.documentId,
+    order.legacyId,
+    order.remoteId
+  ]);
+  const orderReferenceValues = getOrderReferenceValues(order);
 
   return (Array.isArray(packageTasks) ? packageTasks : []).filter((task) => {
-    if (valuesOverlap(identityValuesFromFields(task, ORDER_RELATION_FIELDS), orderValues)) {
+    const taskOrderValues = uniqueIdentityValues([
+      ...identityValuesFromFields(task, ORDER_RELATION_FIELDS),
+      ...flattenFieldValues(task, [
+        "orderId",
+        "orderLocalId",
+        "androidOrderId",
+        "androidOrderLocalId",
+        "orderFirestoreId",
+        "legacyOrderId",
+        "remoteOrderId",
+        "orderIds",
+        "orderIdsLocal"
+      ])
+    ]);
+
+    if (valuesOverlap(taskOrderValues, orderValues)) {
       return true;
     }
 
-    if (valuesOverlap([task.orderId], orderValues)) {
-      return true;
-    }
-
-    return (
-      firstText(task.orderReference) &&
-      normalizeSearchText(task.orderReference) === orderReference
-    );
+    return textValuesOverlap(getPackageTaskOrderReferenceValues(task), orderReferenceValues);
   });
 }
 
 export function getCustomerPackageTasks(customer, packageTasks = [], orders = []) {
-  const orderValues = orders.flatMap((order) => identityValues(order));
+  const customerValues = identityValues(customer);
 
   return (Array.isArray(packageTasks) ? packageTasks : []).filter((task) => {
     if (
       valuesOverlap(
         identityValuesFromFields(task, CUSTOMER_RELATION_FIELDS),
-        identityValues(customer)
+        customerValues
       ) ||
-      valuesOverlap([task.customerId], identityValues(customer))
+      valuesOverlap([task.customerId], customerValues)
     ) {
       return true;
     }
 
-    return valuesOverlap(
-      uniqueIdentityValues([
-        ...identityValuesFromFields(task, ORDER_RELATION_FIELDS),
-        task.orderId
-      ]),
-      orderValues
-    );
+    return orders.some((order) => getOrderPackageTasks(order, [task]).length > 0);
   });
 }
 
@@ -651,80 +701,110 @@ export function isPackageTaskDelivered(task = {}) {
   return normalizePackageTaskStatus(task) === "handedOver";
 }
 
-function recordHasDeliveredStatus(record = {}, ...fields) {
-  return fields.some((field) => {
-    const token = normalizeStatusToken(record?.[field]);
+export const CUSTOMER_ORDER_STATUS = {
+  PACKAGE_PENDING: "Package pending",
+  PARTIALLY_PACKED: "Partially packed",
+  PACKED: "Packed",
+  HANDED_OVER: "Handed over",
+  OPEN: "Open",
+  SHIPPED: "Shipped / in shipment"
+};
 
-    return ["delivered", "complete", "completed", "handedover", "handover"].includes(token);
-  });
+function getPackageTaskAggregateStatus(packageTasks = []) {
+  const packageStatuses = packageTasks.map(normalizePackageTaskStatus);
+
+  if (packageStatuses.every((status) => status === "handedOver")) {
+    return CUSTOMER_ORDER_STATUS.HANDED_OVER;
+  }
+
+  if (packageStatuses.every((status) => ["packed", "handedOver"].includes(status))) {
+    return CUSTOMER_ORDER_STATUS.PACKED;
+  }
+
+  if (packageStatuses.some((status) => ["partiallyPacked", "packed", "handedOver"].includes(status))) {
+    return CUSTOMER_ORDER_STATUS.PARTIALLY_PACKED;
+  }
+
+  return CUSTOMER_ORDER_STATUS.PACKAGE_PENDING;
+}
+
+function orderHasShipmentLink(order = {}, shipment = null, delivery = null) {
+  return Boolean(
+    shipment ||
+      delivery ||
+      order.shipmentId ||
+      order.shipmentDate ||
+      order.shipmentTrackingNumber ||
+      order.closedAt
+  );
+}
+
+function orderHasItems(order = {}, purchases = []) {
+  return Boolean(
+    (Array.isArray(purchases) && purchases.length > 0) ||
+      (Array.isArray(order.items) && order.items.length > 0) ||
+      Number(order.itemCount) > 0
+  );
+}
+
+function orderMarkedForShipment(order = {}) {
+  const token = normalizeStatusToken(firstText(order.status, order.orderStatus, order.shipmentStatus));
+
+  return [
+    "shipped",
+    "intransit",
+    "inshipment",
+    "delivered",
+    "complete",
+    "completed",
+    "closed"
+  ].includes(token);
+}
+
+export function isCustomerFacingOrderDeliveredStatus(status) {
+  return status === CUSTOMER_ORDER_STATUS.HANDED_OVER;
+}
+
+export function isCustomerFacingOrderOpenStatus(status) {
+  return status === CUSTOMER_ORDER_STATUS.OPEN;
+}
+
+export function getCustomerFacingOrderStatus(
+  order = {},
+  packageTasks = [],
+  shipments = [],
+  deliveries = [],
+  purchases = []
+) {
+  const orderPackageTasks = getOrderPackageTasks(order, packageTasks);
+
+  if (orderPackageTasks.length > 0) {
+    return getPackageTaskAggregateStatus(orderPackageTasks);
+  }
+
+  const explicitStatus = firstText(order.status, order.orderStatus);
+  const shipment = getOrderShipment(order, shipments);
+  const delivery = getOrderDelivery(order, deliveries, shipments);
+
+  if (orderMarkedForShipment(order) || orderHasShipmentLink(order, shipment, delivery)) {
+    return CUSTOMER_ORDER_STATUS.SHIPPED;
+  }
+
+  if (normalizeStatusToken(explicitStatus) === "open" || orderHasItems(order, purchases)) {
+    return CUSTOMER_ORDER_STATUS.OPEN;
+  }
+
+  return explicitStatus || CUSTOMER_ORDER_STATUS.OPEN;
 }
 
 export function getOrderStatus(order = {}, shipments = [], deliveries = [], packageTasks = []) {
-  const explicitStatus = firstText(order.status);
-  const explicitStatusText = normalizeSearchText(explicitStatus);
-
-  if (explicitStatusText === "open") {
-    return "Open";
-  }
-
-  if (["delivered", "complete", "completed"].includes(explicitStatusText)) {
-    return "Delivered";
-  }
-
-  if (["shipped", "in transit", "in-transit"].includes(explicitStatusText)) {
-    return explicitStatus === "in transit" ? "In transit" : explicitStatus;
-  }
-
-  const shipment = getOrderShipment(order, shipments);
-  const delivery = getOrderDelivery(order, deliveries, shipments);
-  const orderPackageTasks = getOrderPackageTasks(order, packageTasks);
-  const packageStatuses = orderPackageTasks.map(normalizePackageTaskStatus);
-  const hasPackageTasks = packageStatuses.length > 0;
-  const allPackagesDelivered =
-    hasPackageTasks && packageStatuses.every((status) => status === "handedOver");
-  const anyPackageStarted =
-    hasPackageTasks && packageStatuses.some((status) => status !== "pending");
-  const allPackagesPacked =
-    hasPackageTasks && packageStatuses.every((status) => ["packed", "handedOver"].includes(status));
-  const shipmentStatus = firstText(shipment?.status, order.shipmentStatus);
-  const deliveryStatus = firstText(delivery?.status, order.deliveryStatus);
-
-  if (
-    allPackagesDelivered ||
-    recordHasDeliveredStatus(delivery, "status", "deliveryStatus") ||
-    recordHasDeliveredStatus(order, "deliveryStatus")
-  ) {
-    return "Delivered";
-  }
-
-  if (!hasPackageTasks && recordHasDeliveredStatus(shipment, "status", "shipmentStatus")) {
-    return "Delivered";
-  }
-
-  if (allPackagesPacked || anyPackageStarted) {
-    return "Shipped";
-  }
-
-  if (
-    shipment ||
-    delivery ||
-    order.shipmentId ||
-    order.shipmentDate ||
-    order.shipmentTrackingNumber ||
-    order.closedAt
-  ) {
-    const transportStatus = shipmentStatus || deliveryStatus;
-
-    return transportStatus && normalizeSearchText(transportStatus).includes("delivered")
-      ? "Shipped"
-      : transportStatus || "Shipped";
-  }
-
-  return explicitStatus || "Open";
+  return getCustomerFacingOrderStatus(order, packageTasks, shipments, deliveries);
 }
 
-export function isOrderOpen(order = {}, shipments = [], deliveries = []) {
-  return getOrderStatus(order, shipments, deliveries) === "Open";
+export function isOrderOpen(order = {}, shipments = [], deliveries = [], packageTasks = [], purchases = []) {
+  return isCustomerFacingOrderOpenStatus(
+    getCustomerFacingOrderStatus(order, packageTasks, shipments, deliveries, purchases)
+  );
 }
 
 export function getOrderSummary(
@@ -751,7 +831,7 @@ export function getOrderSummary(
     shipment,
     delivery,
     packageTasks: tasks,
-    status: getOrderStatus(order, shipments, deliveries, packageTasks)
+    status: getCustomerFacingOrderStatus(order, packageTasks, shipments, deliveries, orderPurchases)
   };
 }
 

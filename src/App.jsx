@@ -56,6 +56,7 @@ import {
   getPurchaseQuantity,
   getPurchaseReceiptUrl,
   getPurchaseUnitPrice,
+  isCustomerFacingOrderDeliveredStatus,
   isOrderOpen,
   isPendingRequestedItem,
   normalizePhone,
@@ -1286,7 +1287,7 @@ function ReceiptPanel({ summary, data, setNotice }) {
   const receiptOrders = useMemo(() => {
     if (mode === "open") {
       return orders.filter((order) =>
-        isOrderOpen(order, data.shipments, data.deliveries)
+        isOrderOpen(order, data.shipments, data.deliveries, data.packageTasks, data.purchases)
       );
     }
 
@@ -1299,7 +1300,7 @@ function ReceiptPanel({ summary, data, setNotice }) {
     return orders.filter(
       (order) => getRecordKey(order, getOrderReference(order)) === selectedOrderKey
     );
-  }, [data.deliveries, data.shipments, endDate, mode, orders, selectedOrderKey, startDate]);
+  }, [data.deliveries, data.packageTasks, data.purchases, data.shipments, endDate, mode, orders, selectedOrderKey, startDate]);
 
   const receiptModel = useMemo(
     () =>
@@ -2200,7 +2201,9 @@ function App() {
 
       if (
         filters.deliveredOnly &&
-        !summary.orderSummaries.some((orderSummary) => orderSummary.status === "Delivered")
+        !summary.orderSummaries.some((orderSummary) =>
+          isCustomerFacingOrderDeliveredStatus(orderSummary.status)
+        )
       ) {
         return false;
       }

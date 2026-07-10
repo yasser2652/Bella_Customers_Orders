@@ -927,19 +927,24 @@ p {
   white-space: nowrap;
 }
 
-.status-open {
+.status-open,
+.status-package-pending {
   border-color: var(--border-strong);
   background: var(--surface-warm);
 }
 
 .status-shipped,
-.status-in-transit {
+.status-in-transit,
+.status-shipped-in-shipment,
+.status-partially-packed,
+.status-packed {
   border-color: var(--info-border);
   background: var(--info-bg);
   color: var(--info-text);
 }
 
-.status-delivered {
+.status-delivered,
+.status-handed-over {
   border-color: var(--success-border);
   background: var(--success-bg);
   color: var(--success-text);

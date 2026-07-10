@@ -134,9 +134,24 @@ assert.equal(
   formatCurrencyTotals(paymentSummary.remainingTotals),
   "LYD 60.00 + USD 20.00 + CAD 10.00"
 );
-assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 1);
-assert.equal(formatCurrencyTotals(paymentSummary.deliveredRemainingTotals), "CAD 10.00");
-assert.equal(paymentSummary.hasDeliveredOutstandingBalance, true);
+assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 0);
+assert.equal(paymentSummary.deliveredRemainingTotals.length, 0);
+assert.equal(paymentSummary.hasDeliveredOutstandingBalance, false);
+const handedOverPaymentSummary = buildCustomerSummary(customer, {
+  ...data,
+  packageTasks: [
+    ...packageTasks,
+    {
+      id: "task-2",
+      orderId: "order-2",
+      status: "handedOver"
+    }
+  ]
+});
+const handedOverPaymentStatus = buildCustomerPaymentSummary(handedOverPaymentSummary, data.packageScanLogs);
+assert.equal(formatCurrencyTotals(handedOverPaymentStatus.deliveredRemainingTotals), "CAD 10.00");
+assert.equal(handedOverPaymentStatus.hasDeliveredOutstandingBalance, true);
+assert.equal(getPaymentFollowUps([handedOverPaymentSummary], data.packageScanLogs).length, 1);
 
 const mirroredPackageTaskSummary = buildCustomerSummary(customer, {
   ...data,
@@ -196,22 +211,92 @@ assert.equal(zeroCorrectionPatch.deliveryPaymentUsd, 0);
 const firstOrderPurchases = getOrderPurchases(orders[0], purchases);
 assert.equal(firstOrderPurchases.length, 2);
 
-const deliveredSummary = getOrderSummary(
+const deliveredShipmentOnlySummary = getOrderSummary(
   orders[1],
   purchases,
   shipments,
   [],
   []
 );
-assert.equal(deliveredSummary.status, "Delivered");
-const packedShipmentSummary = getOrderSummary(
+assert.equal(deliveredShipmentOnlySummary.status, "Shipped / in shipment");
+const pendingPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-pending", orderId: "order-1", status: "pending" }]
+);
+assert.equal(pendingPackageSummary.status, "Package pending");
+const partialPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-partial", orderId: "order-1", status: "partiallyPacked" }]
+);
+assert.equal(partialPackageSummary.status, "Partially packed");
+const packedPackageSummary = getOrderSummary(
   orders[0],
   purchases,
   [{ id: "shipment-packed", orderIds: ["order-1"], status: "Delivered" }],
   [],
   [{ id: "task-packed", orderId: "order-1", status: "ready" }]
 );
-assert.equal(packedShipmentSummary.status, "Shipped");
+assert.equal(packedPackageSummary.status, "Packed");
+const handedOverPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-handed", orderId: "order-1", status: "handedOver" }]
+);
+assert.equal(handedOverPackageSummary.status, "Handed over");
+const legacyDeliveredPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-legacy", orderId: "order-1", status: "completed" }]
+);
+assert.equal(legacyDeliveredPackageSummary.status, "Handed over");
+const mixedStartedPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [
+    { id: "task-mixed-pending", orderId: "order-1", status: "pending" },
+    { id: "task-mixed-packed", orderId: "order-1", status: "packed" }
+  ]
+);
+assert.equal(mixedStartedPackageSummary.status, "Partially packed");
+const allPackedOrHandedSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [
+    { id: "task-all-packed", orderId: "order-1", status: "packed" },
+    { id: "task-all-handed", orderId: "order-1", status: "handedOver" }
+  ]
+);
+assert.equal(allPackedOrHandedSummary.status, "Packed");
+const orderIdsPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-order-ids", orderIds: ["order-1"], status: "handedOver" }]
+);
+assert.equal(orderIdsPackageSummary.status, "Handed over");
+const orderReferencesPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-order-references", orderReferences: ["BB-1001"], status: "packed" }]
+);
+assert.equal(orderReferencesPackageSummary.status, "Packed");
 
 const totalsText = formatCurrencyTotals(summary.currencyTotals);
 assert.equal(totalsText, "LYD 100.00 + USD 25.00 + CAD 10.00");

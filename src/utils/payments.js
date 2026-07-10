@@ -10,6 +10,7 @@ import {
   combineCurrencyTotals,
   firstText,
   getOrderReference,
+  isCustomerFacingOrderDeliveredStatus,
   roundCurrencyAmount
 } from "./relationships.js";
 
@@ -394,7 +395,7 @@ function getDeliveredPaymentScope(summary = {}) {
       order: orders[index],
       orderSummary
     }))
-    .filter(({ orderSummary }) => orderSummary?.status === "Delivered");
+    .filter(({ orderSummary }) => isCustomerFacingOrderDeliveredStatus(orderSummary?.status));
 
   return {
     orders: deliveredEntries.map(({ order }) => order).filter(Boolean),
