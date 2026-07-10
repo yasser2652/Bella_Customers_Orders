@@ -250,7 +250,7 @@ const handedOverPackageSummary = getOrderSummary(
   [],
   [{ id: "task-handed", orderId: "order-1", status: "handedOver" }]
 );
-assert.equal(handedOverPackageSummary.status, "Handed over");
+assert.equal(handedOverPackageSummary.status, "Handed over / delivered to customer");
 const legacyDeliveredPackageSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -258,7 +258,7 @@ const legacyDeliveredPackageSummary = getOrderSummary(
   [],
   [{ id: "task-legacy", orderId: "order-1", status: "completed" }]
 );
-assert.equal(legacyDeliveredPackageSummary.status, "Handed over");
+assert.equal(legacyDeliveredPackageSummary.status, "Handed over / delivered to customer");
 const mixedStartedPackageSummary = getOrderSummary(
   orders[0],
   purchases,
@@ -288,7 +288,31 @@ const orderIdsPackageSummary = getOrderSummary(
   [],
   [{ id: "task-order-ids", orderIds: ["order-1"], status: "handedOver" }]
 );
-assert.equal(orderIdsPackageSummary.status, "Handed over");
+assert.equal(orderIdsPackageSummary.status, "Handed over / delivered to customer");
+const linkedOrderIdsPackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-linked-order-ids", linkedOrderIds: ["order-1"], status: "handedOver" }]
+);
+assert.equal(linkedOrderIdsPackageSummary.status, "Handed over / delivered to customer");
+const documentReferencePackageSummary = getOrderSummary(
+  orders[0],
+  purchases,
+  [],
+  [],
+  [{ id: "task-document-reference", orderRef: { path: "orders/order-1" }, status: "handedOver" }]
+);
+assert.equal(documentReferencePackageSummary.status, "Handed over / delivered to customer");
+const shippedOpenOrderSummary = getOrderSummary(
+  { ...orders[0], status: "OPEN", shipmentId: "shipment-1", shippedAt: "2026-01-15T09:00:00.000Z" },
+  purchases,
+  [],
+  [],
+  []
+);
+assert.equal(shippedOpenOrderSummary.status, "Shipped / in shipment");
 const orderReferencesPackageSummary = getOrderSummary(
   orders[0],
   purchases,

@@ -944,7 +944,8 @@ p {
 }
 
 .status-delivered,
-.status-handed-over {
+.status-handed-over,
+.status-handed-over-delivered-to-customer {
   border-color: var(--success-border);
   background: var(--success-bg);
   color: var(--success-text);

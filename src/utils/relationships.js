@@ -541,12 +541,69 @@ export function getCustomerDeliveries(customer, deliveries = [], orders = [], sh
   });
 }
 
-function flattenFieldValues(record = {}, fields = []) {
-  return fields.flatMap((field) => {
-    const value = record?.[field];
+function addPathValueVariants(values = [], value) {
+  const cleanValue = String(value || "").trim().replace(/^\/+/, "");
 
-    return Array.isArray(value) ? value : [value];
-  });
+  if (!cleanValue) {
+    return values;
+  }
+
+  values.push(cleanValue);
+
+  if (cleanValue.includes("/")) {
+    const segments = cleanValue.split("/").filter(Boolean);
+    const lastSegment = segments[segments.length - 1];
+
+    if (lastSegment) {
+      values.push(lastSegment);
+    }
+  }
+
+  return values;
+}
+
+function relationValueVariants(value) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(relationValueVariants);
+  }
+
+  if (typeof value === "object") {
+    const values = [];
+
+    ["id", "firestoreId", "documentId"].forEach((field) => {
+      if (value[field] !== undefined && value[field] !== null) {
+        values.push(value[field]);
+      }
+    });
+
+    if (typeof value.path === "string") {
+      addPathValueVariants(values, value.path);
+    }
+
+    const keySegments = value?._key?.path?.segments || value?._path?.segments;
+
+    if (Array.isArray(keySegments) && keySegments.length > 0) {
+      addPathValueVariants(values, keySegments.join("/"));
+    }
+
+    return uniqueIdentityValues(values);
+  }
+
+  const values = [value];
+
+  if (String(value).includes("/")) {
+    addPathValueVariants(values, value);
+  }
+
+  return uniqueIdentityValues(values);
+}
+
+function flattenFieldValues(record = {}, fields = []) {
+  return fields.flatMap((field) => relationValueVariants(record?.[field]));
 }
 
 function normalizedTextValues(values = []) {
@@ -589,7 +646,8 @@ export function getOrderPackageTasks(order, packageTasks = []) {
     order.firestoreId,
     order.documentId,
     order.legacyId,
-    order.remoteId
+    order.remoteId,
+    ...flattenFieldValues(order, ["ref", "orderRef", "documentReference", "documentRef", "path"])
   ]);
   const orderReferenceValues = getOrderReferenceValues(order);
 
@@ -605,7 +663,19 @@ export function getOrderPackageTasks(order, packageTasks = []) {
         "legacyOrderId",
         "remoteOrderId",
         "orderIds",
-        "orderIdsLocal"
+        "orderIdsLocal",
+        "linkedOrderIds",
+        "orderRef",
+        "orderReference",
+        "orderNumber",
+        "reference",
+        "order",
+        "orderPath",
+        "orderDocumentPath",
+        "orderDocumentReference",
+        "orderDocumentRef",
+        "orderRefPath",
+        "orderDocPath"
       ])
     ]);
 
@@ -705,7 +775,7 @@ export const CUSTOMER_ORDER_STATUS = {
   PACKAGE_PENDING: "Package pending",
   PARTIALLY_PACKED: "Partially packed",
   PACKED: "Packed",
-  HANDED_OVER: "Handed over",
+  HANDED_OVER: "Handed over / delivered to customer",
   OPEN: "Open",
   SHIPPED: "Shipped / in shipment"
 };
@@ -734,6 +804,9 @@ function orderHasShipmentLink(order = {}, shipment = null, delivery = null) {
       delivery ||
       order.shipmentId ||
       order.shipmentDate ||
+      order.shippedAt ||
+      order.shippedOn ||
+      order.shippedDate ||
       order.shipmentTrackingNumber ||
       order.closedAt
   );
