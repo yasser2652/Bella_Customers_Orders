@@ -47,6 +47,7 @@ import {
 import { getRecordKey, identityValues } from "./utils/identity.js";
 import {
   buildCustomerSummary,
+  CUSTOMER_ORDER_STATUS,
   combineCurrencyTotals,
   customerMatchesSearch,
   dateIsInRange,
@@ -587,15 +588,15 @@ function SearchWorkspace({
         <label>
           <input
             type="checkbox"
-            checked={filters.pendingRequests}
+            checked={filters.readyForDelivery}
             onChange={(event) =>
               setFilters((currentFilters) => ({
                 ...currentFilters,
-                pendingRequests: event.target.checked
+                readyForDelivery: event.target.checked
               }))
             }
           />
-          Has pending requested items
+          Ready for delivery
         </label>
       </div>
 
@@ -2334,7 +2335,7 @@ function CustomerOrdersWorkspace({ dataState, authUser }) {
   const [filters, setFilters] = useState({
     openOnly: false,
     deliveredOnly: false,
-    pendingRequests: false
+    readyForDelivery: false
   });
   const [selectedCustomerKey, setSelectedCustomerKey] = useState("");
   const [notice, setNotice] = useState(null);
@@ -2407,7 +2408,12 @@ function CustomerOrdersWorkspace({ dataState, authUser }) {
         return false;
       }
 
-      if (filters.pendingRequests && summary.pendingRequestedItems.length === 0) {
+      if (
+        filters.readyForDelivery &&
+        !summary.orderSummaries.some(
+          (orderSummary) => orderSummary.status === CUSTOMER_ORDER_STATUS.READY
+        )
+      ) {
         return false;
       }
 
