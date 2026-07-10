@@ -138,6 +138,29 @@ assert.equal(getPaymentFollowUps([summary], data.packageScanLogs).length, 1);
 assert.equal(formatCurrencyTotals(paymentSummary.deliveredRemainingTotals), "CAD 10.00");
 assert.equal(paymentSummary.hasDeliveredOutstandingBalance, true);
 
+const mirroredPackageTaskSummary = buildCustomerSummary(customer, {
+  ...data,
+  packageTasks: [
+    {
+      ...packageTasks[0],
+      id: "task-mirror-1",
+      deliveryPaymentLyd: 100,
+      deliveryPaymentUsd: 25,
+      deliveryPaymentUpdatedAt: "2026-01-13T10:00:00.000Z"
+    },
+    {
+      ...packageTasks[0],
+      id: "task-mirror-2",
+      deliveryPaymentLyd: 95,
+      deliveryPaymentUsd: 25,
+      deliveryPaymentUpdatedAt: "2026-01-13T10:15:00.000Z"
+    }
+  ],
+  packageScanLogs: []
+});
+const mirroredPackageTaskPaymentSummary = buildCustomerPaymentSummary(mirroredPackageTaskSummary, []);
+assert.equal(formatCurrencyTotals(mirroredPackageTaskPaymentSummary.paidTotals), "LYD 95.00 + USD 25.00");
+assert.equal(mirroredPackageTaskPaymentSummary.packageTaskPaymentCount, 1);
 const awaitingDeliverySummary = buildCustomerSummary(customer, {
   ...data,
   shipments: [],
@@ -313,3 +336,4 @@ assert.deepEqual(
 );
 
 console.log("Smoke checks passed.");
+

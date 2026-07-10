@@ -74,15 +74,51 @@ function hasCurrencyTotals(currencyTotals = []) {
   );
 }
 
-function getPaymentDate(record = {}) {
-  return firstText(...PAYMENT_DATE_FIELDS.map((field) => record[field]));
+function normalizeDateValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "object") {
+    if (typeof value.toDate === "function") {
+      const date = value.toDate();
+      return date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : "";
+    }
+
+    if (Number.isFinite(Number(value.seconds))) {
+      const milliseconds = Number(value.seconds) * 1000 + Math.floor((Number(value.nanoseconds) || 0) / 1000000);
+      return new Date(milliseconds).toISOString();
+    }
+  }
+
+  return String(value || "").trim();
 }
 
-function getPaymentTime(record = {}) {
-  const dateValue = getPaymentDate(record);
+function getPaymentDate(record = {}) {
+  for (const field of PAYMENT_DATE_FIELDS) {
+    const value = normalizeDateValue(record[field]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function getDateTimeValue(value) {
+  const dateValue = normalizeDateValue(value);
   const date = dateValue ? new Date(dateValue) : null;
 
   return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+}
+
+function getPaymentTime(record = {}) {
+  return getDateTimeValue(getPaymentDate(record));
 }
 
 function latestDateValue(values = []) {
@@ -90,10 +126,10 @@ function latestDateValue(values = []) {
     values
       .filter(Boolean)
       .sort((leftValue, rightValue) => {
-        const leftTime = new Date(leftValue).getTime();
-        const rightTime = new Date(rightValue).getTime();
+        const leftTime = getDateTimeValue(leftValue);
+        const rightTime = getDateTimeValue(rightValue);
 
-        return (rightTime || 0) - (leftTime || 0);
+        return rightTime - leftTime;
       })[0] || ""
   );
 }
@@ -172,6 +208,31 @@ function getTaskKey(task = {}, index = 0) {
   return getSourceKey(task, `task-${index}`);
 }
 
+function getTaskOrderReference(task = {}) {
+  return firstText(task.orderReference, task.orderNumber, task.orderRef, task.reference);
+}
+
+function getTaskPaymentGroupKey(task = {}, index = 0) {
+  const orderKey = firstText(
+    ...identityValuesFromFields(task, ORDER_RELATION_FIELDS),
+    task.orderId,
+    getTaskOrderReference(task)
+  );
+
+  if (orderKey) {
+    return `order:${normalizeComparableText(orderKey)}`;
+  }
+
+  const customerKey = firstText(...identityValuesFromFields(task, CUSTOMER_RELATION_FIELDS), task.customerId);
+  const deliveryKey = firstText(task.packageId, task.packageLocalId, task.deliveryId, task.shipmentId, task.trackingNumber, task.tracking);
+
+  if (customerKey && deliveryKey) {
+    return `delivery:${normalizeComparableText(`${customerKey}:${deliveryKey}`)}`;
+  }
+
+  return `task:${getTaskKey(task, index)}`;
+}
+
 function getLogOrderReference(log = {}) {
   return firstText(...LOG_ORDER_REFERENCE_FIELDS.map((field) => log[field]));
 }
@@ -191,11 +252,9 @@ function logMatchesTask(log = {}, task = {}) {
 
   return Boolean(
     getLogOrderReference(log) &&
-      firstText(task.orderReference, task.orderNumber, task.orderRef, task.reference) &&
+      getTaskOrderReference(task) &&
       normalizeComparableText(getLogOrderReference(log)) ===
-        normalizeComparableText(
-          firstText(task.orderReference, task.orderNumber, task.orderRef, task.reference)
-        )
+        normalizeComparableText(getTaskOrderReference(task))
   );
 }
 
@@ -253,14 +312,17 @@ function buildPaymentSources(summary = {}, packageScanLogs = [], scope = {}) {
   const matchLog = scope.requireOrderOrTaskMatch
     ? (log) => logMatchesOrderOrTask(log, orders, tasks)
     : (log) => logMatchesSummary(log, summary);
-  const taskSources = tasks
+  const rawTaskSources = tasks
     .map((task, index) => ({
       type: "packageTask",
-      groupKey: `task:${getTaskKey(task, index)}`,
+      groupKey: getTaskPaymentGroupKey(task, index),
       record: task,
       currencyTotals: getPaymentTotals(task)
     }))
     .filter((source) => hasCurrencyTotals(source.currencyTotals));
+  // Delivery payment fields can be mirrored onto every package task for the same order.
+  // Count the latest order-level record once instead of summing duplicated task documents.
+  const taskSources = selectLatestSourcesByGroup(rawTaskSources);
   const taskSourcesByGroup = new Map(
     taskSources.map((source) => [source.groupKey, source])
   );
@@ -271,7 +333,7 @@ function buildPaymentSources(summary = {}, packageScanLogs = [], scope = {}) {
       const matchingTaskIndex = tasks.findIndex((task) => logMatchesTask(log, task));
       const groupKey =
         matchingTaskIndex >= 0
-          ? `task:${getTaskKey(tasks[matchingTaskIndex], matchingTaskIndex)}`
+          ? getTaskPaymentGroupKey(tasks[matchingTaskIndex], matchingTaskIndex)
           : `log:${firstText(
               ...identityValuesFromFields(log, ORDER_RELATION_FIELDS),
               getLogOrderReference(log),
